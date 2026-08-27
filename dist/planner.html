@@ -755,6 +755,19 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
   /* ---------------- boot ---------------- */
 
+  /** First URL that returns usable price data, else an empty set. */
+  async function firstOf(urls) {
+    for (const u of urls) {
+      try {
+        const r = await fetch(u);
+        if (!r.ok) continue;
+        const j = await r.json();
+        if (j && j.lowestBin && Object.keys(j.lowestBin).length) return j;
+      } catch { /* try the next one */ }
+    }
+    return { generated: 0, lowestBin: {} };
+  }
+
   async function boot() {
     cat = MP.index(window.__CATALOGUE__ || await (await fetch("data/accessories.json")).json());
 
@@ -762,9 +775,9 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     if (cached && cached.lowestBin && Date.now() - cached.generated < PRICE_TTL) prices = cached;
     else prices = window.__PRICES__ || null;
 
-    if (!prices) {
-      try { prices = await (await fetch("/api/prices")).json(); } catch { prices = { generated: 0, lowestBin: {} }; }
-    }
+    // Local server sweeps the whole Auction House itself; a static host has neither,
+    // so fall through to the committed snapshot before giving up.
+    if (!prices) prices = await firstOf(["api/prices", "data/prices-snapshot.json"]);
 
     $("contacts").value = state.contacts;
     $("budget").value = load(LS.budget, "100m");
