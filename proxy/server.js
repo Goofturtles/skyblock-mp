@@ -145,8 +145,8 @@ const TRUSTED_HOPS = (() => {
   // dropped (service recreated, blueprint redeploy), falling back to 1 would silently put
   // every visitor in one rate-limit bucket again.
   if (process.env.RENDER) {
-    console.warn("TRUSTED_PROXY_HOPS is not set; assuming 3 (Cloudflare + two Render layers). "
-      + "Confirm with /whoami and pin it.");
+    console.warn(`TRUSTED_PROXY_HOPS is ${raw == null || raw === "" ? "not set" : "unusable"}; `
+      + "assuming 3 (Cloudflare + two Render layers). Confirm with /whoami and pin it.");
     return 3;
   }
   return 0;
@@ -445,7 +445,11 @@ async function handle(req, res) {
     const code = Number.isInteger(e.code) && e.code >= 400 && e.code <= 599 ? e.code
       : e.name === "TimeoutError" ? 502 : 500;
     res.writeHead(code, headers);
-    res.end(JSON.stringify({ error: code === 500 ? "Could not read that bag." : String(e.message || e) }));
+    res.end(JSON.stringify({
+      error: code === 500 ? "Could not read that bag."
+        : e.name === "TimeoutError" ? "Hypixel took too long to answer. Try again in a moment."
+        : String(e.message || e),
+    }));
     console.warn(`bag ${name} failed (${code}): ${e.message}`);
   }
 }
