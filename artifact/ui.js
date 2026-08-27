@@ -13,7 +13,7 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const LS = { owned: "apl:owned", contacts: "apl:contacts", budget: "apl:budget", prices: "apl:prices", seen: "apl:seen", recomb: "apl:recomb", key: "apl:key", progress: "apl:progress", hideLocked: "apl:hideLocked", capacity: "apl:capacity", jacobus: "apl:jacobus" };
+  const LS = { owned: "apl:owned", contacts: "apl:contacts", budget: "apl:budget", prices: "apl:prices", seen: "apl:seen", recomb: "apl:recomb", key: "apl:key", progress: "apl:progress", hideLocked: "apl:hideLocked", capacity: "apl:capacity", jacobus: "apl:jacobus", roomOk: "apl:roomOk" };
   const SLAYERS = ["zombie", "spider", "wolf", "enderman", "blaze", "vampire"];
   const TROPHIES = ["FROG", "LAVA"];
   const COFL = "https://sky.coflnet.com/api";
@@ -692,9 +692,9 @@
   function renderCounts(d) {
     const set = (tab, n) => { const e = document.querySelector(`.tab[data-tab="${tab}"] .count`); if (e) e.textContent = n; };
     // The value tab shows one row per family, so its label must count families, not offers.
-    const capNow = MP.capacityPlan(cat, state.owned, prices, { ...d.opts, hideLocked: state.hideLocked });
+    const capNow = MP.capacityPlan(cat, state.owned, prices, { ...d.opts, hideLocked: state.hideLocked, assumeFull: !load(LS.roomOk, false) });
     set("value", capNow.full
-      ? capNow.upgrades.length + capNow.swaps.length
+      ? MP.bestPerFamily(capNow.upgrades).length + capNow.swaps.length
       : MP.bestPerFamily(d.all).filter((o) => !state.hideLocked || !o.locked).length);
     set("max", d.maxTier.filter((o) => !state.hideLocked || !o.locked).length);
     set("earn", d.earn.length);
@@ -728,9 +728,45 @@
 
     // Telling someone to buy more when the bag is full is useless advice — nothing can
     // go in until something comes out. Say so, and change what is being recommended.
-    const cap = MP.capacityPlan(cat, state.owned, prices, { ...d.opts, hideLocked: state.hideLocked });
-    if (cap.full) { renderFullBag(node, cap); return; }
-    if (cap.capacity && cap.free <= 2) {
+    const cap = MP.capacityPlan(cat, state.owned, prices, { ...d.opts, hideLocked: state.hideLocked, assumeFull: !load(LS.roomOk, false) });
+    if (cap.full) { renderFullBag(node, cap, cap.assumed); return; }
+
+    // The page already knows how many accessories are held, so making someone count
+    // slots by hand is asking for a number it can work out. An untouched slot count is
+    // therefore assumed to equal what is held — the common case is a full bag, and that
+    // is also the case where wrong advice actually costs something. Said out loud, and
+    // overridden by typing a real number.
+    if (cap.assumed) {
+      const note = el("div", "callout");
+      note.append(el("h3", null, `Assuming ${cap.capacity} slots, because that is what you hold`));
+      const p = el("p", null,
+        "If your bag has spare room, put the real number in Bag slots and this goes back to a plain buy list. ");
+      const b = el("button", "linkish", "I have room to spare");
+      b.type = "button";
+      b.addEventListener("click", () => { save(LS.roomOk, true); render(); });
+      p.append(b);
+      note.append(p);
+      node.append(note);
+    }
+
+    // Dead weight is the loudest thing the page can say to someone with a packed bag:
+    // free slots they already own. Saying nothing and listing purchases buries it.
+    if (cap.capacity && cap.dead.length) {
+      const c = el("div", "callout good");
+      c.append(el("h3", null,
+        `${cap.dead.length} of your ${cap.held} accessories are contributing nothing`));
+      const p = el("p", null,
+        `They are outranked inside their own families, so removing them costs no power and frees `
+        + `${cap.dead.length} slot${cap.dead.length === 1 ? "" : "s"} you already own. `);
+      const b = el("button", "linkish", "See what to take out");
+      b.type = "button";
+      b.addEventListener("click", () => selectTab("slots"));
+      p.append(b);
+      c.append(p);
+      node.append(c);
+    }
+
+    if (cap.capacity && cap.free <= 2 && !cap.dead.length) {
       const warn = el("div", "callout warn");
       warn.append(el("h3", null, `${cap.free} slot${cap.free === 1 ? "" : "s"} left of ${cap.capacity}`));
       warn.append(el("p", null, "Once it is full this list switches to swaps — what to take out for what."));
@@ -895,13 +931,21 @@
    * wasted, take the upgrades that cost no slot at all, then either swap out your weakest
    * or pay Jacobus to stop having to.
    */
-  function renderFullBag(node, cap) {
+  function renderFullBag(node, cap, assumed) {
     const head = el("div", "callout warn");
     head.append(el("h3", null, cap.held > cap.capacity
       ? `Your bag is over its stated size — ${cap.held} accessories in ${cap.capacity} slots`
       : `Your bag is full — ${cap.held} of ${cap.capacity} slots`));
     head.append(el("p", null,
       "Nothing new fits until something comes out, so this is what to trade rather than what to add."));
+    if (assumed) {
+      const p = el("p", null, "Slot count assumed from what you hold. ");
+      const b = el("button", "linkish", "I have room to spare");
+      b.type = "button";
+      b.addEventListener("click", () => { save(LS.roomOk, true); render(); });
+      p.append(b);
+      head.append(p);
+    }
     node.append(head);
 
     if (cap.dead.length) {
@@ -930,12 +974,15 @@
     }
 
     if (cap.upgrades.length) {
-      node.append(el("h2", "slot-head", `Upgrades that cost no slot (${cap.upgrades.length})`));
+      const upCount = MP.bestPerFamily(cap.upgrades).length;
+      node.append(el("h2", "slot-head", `Upgrades that cost no slot (${upCount})`));
       const sub = el("p", "note", "A higher tier of a family you already hold — the old one comes out as the new one goes in.");
       node.append(sub);
       const t = asTable(el("div", "ledger"));
       header(t, "upgrades");
-      const upView = applyView(cap.upgrades);
+      // One row per family here too. Listing the Ring and the Artifact above it reads as
+      // "buy both" when buying the Ring first is money wasted if the Artifact is the target.
+      const upView = applyView(MP.bestPerFamily(cap.upgrades));
       fill(t, upView.slice(0, CAP), entry, state.search ? "No upgrade matches that search." : "");
       node.append(t);
       truncationNote(node, upView.length);
@@ -1206,6 +1253,7 @@
         const v = Math.min(max, Math.max(0, Number(input.value) || 0));
         if (String(v) !== input.value) input.value = String(v);   // show what is actually used
         set(v);
+        if (id === "capacity" && v > 0) save(LS.roomOk, false);
         save(key, id === "capacity" ? state.capacity : state.jacobusBought);
         renderSoon();
       });

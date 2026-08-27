@@ -423,11 +423,17 @@
    * addition, which is what the rest of the app already assumes.
    */
   function capacityPlan(cat, owned, prices, opts) {
-    const capacity = Number(opts?.capacity) || 0;
     const contacts = opts?.contacts || 0;
     const byId = cat.byId;
 
     const held = Object.keys(owned).length;
+    // An unset slot count is assumed to equal what is held, rather than treated as
+    // unlimited: a bag you have not measured is far more often full than infinite, and
+    // assuming infinite is the assumption that produces advice which cannot be followed.
+    // `assumeFull` is false once the player says they have room.
+    const stated = Number(opts?.capacity) || 0;
+    const assumed = !stated && held >= 5 && opts?.assumeFull !== false;
+    const capacity = stated || (assumed ? held : 0);
     const dead = slotPlan(cat, owned, prices, opts).dead;
     const deadIds = new Set(dead.map((d) => d.id));
 
@@ -533,7 +539,7 @@
     }
 
     return {
-      capacity, held, free: capacity ? free : null, full,
+      capacity, held, free: capacity ? free : null, full, assumed,
       hiddenLocked: hideLocked
         ? bestPerFamily(offers(cat, owned, prices, opts).filter((o) => o.locked)).length : 0,
       dead,
