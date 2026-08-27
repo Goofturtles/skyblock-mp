@@ -9,17 +9,10 @@ const zlib = require("zlib");
 const fs = require("fs");
 const path = require("path");
 
-// Pull readNBT out of the proxy so this tests the shipped parser, not a copy.
-const src = fs.readFileSync(path.join(__dirname, "..", "proxy", "server.js"), "utf8");
-const fn = src.slice(src.indexOf("function readNBT(buf) {"));
-const readNBT = new Function(fn.slice(0, fn.indexOf("\n}\n") + 3) + "; return readNBT;")();
+// The proxy exports its parser, so this exercises the shipped code, not a copy.
+const { readNBT } = require("../proxy/server.js");
 
 /* ---- minimal NBT writer, only what a bag needs ---- */
-const b = {
-  byte: (v) => Buffer.from([1, ...str16(""), v & 0xff]),
-  str: (s) => Buffer.concat([Buffer.from([8]), Buffer.from(str16("")), nbtStr(s)]),
-};
-function str16(s) { const x = Buffer.from(s, "utf8"); return [x.length >> 8, x.length & 0xff, ...x]; }
 function nbtStr(s) { const x = Buffer.from(s, "utf8"); return Buffer.concat([Buffer.from([x.length >> 8, x.length & 0xff]), x]); }
 function named(tag, name, payload) { return Buffer.concat([Buffer.from([tag]), nbtStr(name), payload]); }
 function compound(children) { return Buffer.concat([...children, Buffer.from([0])]); }
@@ -40,7 +33,7 @@ function bag(items) {
     intTag(items.length),
     ...items,
   ]);
-  const root = compound([named(9, "i", list.slice(1))]);
+  const root = compound([named(9, "i", list)]);
   return Buffer.concat([Buffer.from([10]), nbtStr(""), root]);
 }
 

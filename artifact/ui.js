@@ -623,6 +623,19 @@
 
   const CAP = 150;
 
+  // Which renderer owns each panel. Building all six on every keystroke meant ~6,000
+  // nodes per character typed, most of them into panels nobody was looking at.
+  const PANELS = {
+    value: (d) => renderValue(d),
+    max: (d) => renderMax(d),
+    plan: (d) => renderPlan(d),
+    earn: (d) => renderEarn(d),
+    free: (d) => renderFree(d),
+    bag: () => renderBag(),
+  };
+
+  let renderedTab = null;
+
   function render() {
     // Full re-render nukes focus; put it back where the keyboard user left it.
     const active = document.activeElement;
@@ -630,14 +643,10 @@
 
     const d = derive();
     renderStrip(d);
-    renderCounts(d);
-    renderValue(d);
-    renderMax(d);
-    renderPlan(d);
-    renderEarn(d);
-    renderFree(d);
-    renderBag();
+    renderCounts(d);       // cheap, and the tab labels must stay honest
     renderOnboard(d);
+    (PANELS[state.tab] || PANELS.value)(d);
+    renderedTab = state.tab;
 
     if (focusKey) {
       const back = document.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`);
@@ -900,7 +909,14 @@
     }
     for (const p of document.querySelectorAll('[role="tabpanel"]')) p.hidden = p.id !== "panel-" + name;
     $("searchWrap").hidden = !(name === "value" || name === "max");
-    if (name === "bag") renderBag();
+    // Only the active panel is kept current, so the one being opened may be stale.
+    if (name !== renderedTab) render();
+  }
+
+  /** Coalesces a burst of keystrokes into one render. */
+  function debounce(fn, ms) {
+    let t = 0;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
   }
 
   function wire() {
@@ -923,7 +939,8 @@
       document.querySelector(`.tab[data-tab="${next}"]`).focus();
     });
 
-    $("budget").addEventListener("input", () => { save(LS.budget, $("budget").value); render(); });
+    const renderSoon = debounce(render, 120);
+    $("budget").addEventListener("input", () => { save(LS.budget, $("budget").value); renderSoon(); });
     $("contacts").addEventListener("input", () => {
       const max = cat.rules.abiphoneContactsKnown;
       const raw = Number($("contacts").value) || 0;
@@ -934,8 +951,9 @@
     });
     $("useRecomb").checked = load(LS.recomb, true);
     $("useRecomb").addEventListener("change", () => { save(LS.recomb, $("useRecomb").checked); render(); });
-    $("search").addEventListener("input", () => { state.search = $("search").value; render(); });
-    $("bagSearch").addEventListener("input", () => { state.bagSearch = $("bagSearch").value; renderBag(); });
+    $("search").addEventListener("input", () => { state.search = $("search").value; renderSoon(); });
+    const bagSoon = debounce(renderBag, 120);
+    $("bagSearch").addEventListener("input", () => { state.bagSearch = $("bagSearch").value; bagSoon(); });
     $("bagClear").addEventListener("click", () => {
       state.owned = {};
       state.bagOrder = [];

@@ -354,7 +354,13 @@ function prices() {
 
 /* ---------------- server ---------------- */
 
-http.createServer(async (req, res) => {
+// Requiring this file (from a test) must not start a listener; only running it should.
+if (require.main === module) start();
+
+module.exports = { readNBT, resolveUuid, clientIp, start };
+
+function start() {
+  http.createServer(async (req, res) => {
   try {
     await handle(req, res);
   } catch (e) {
@@ -363,9 +369,10 @@ http.createServer(async (req, res) => {
     if (!res.headersSent) res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
     if (!res.writableEnded) res.end(JSON.stringify({ error: "Internal error." }));
   }
-}).listen(PORT, () => {
-  console.log(`accessory-bag proxy on :${PORT} — key ${KEY ? "configured" : "MISSING"}`);
-});
+  }).listen(PORT, () => {
+    console.log(`accessory-bag proxy on :${PORT} — key ${KEY ? "configured" : "MISSING"}`);
+  });
+}
 
 // A rejected promise with no handler must never be allowed to exit the process.
 process.on("unhandledRejection", (e) => console.error("unhandledRejection:", e));
@@ -416,7 +423,17 @@ async function handle(req, res) {
 
   // Full Auction House prices. No key needed — Hypixel's auction endpoint is public;
   // it is here rather than in the browser purely because it is ~46 pages of ~2.5 MB.
+  //
+  // Origin-locked like /bag, even though it spends no key. Hypixel's policy forbids
+  // "proxying the Public API to 3rd party developers", and an open endpoint handing out
+  // a clean sweep of the whole Auction House is exactly what that reads like, whatever
+  // it was built for.
   if (url.pathname === "/prices") {
+    if (!origin || !ALLOWED.has(origin)) {
+      res.writeHead(403, headers);
+      res.end(JSON.stringify({ error: "This price feed only answers the Accessory Power Ledger." }));
+      return;
+    }
     try {
       const payload = await prices();
       res.writeHead(200, { ...headers, "cache-control": "public, max-age=60" });
