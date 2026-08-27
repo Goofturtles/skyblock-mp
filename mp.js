@@ -378,6 +378,149 @@
     };
   }
 
+
+
+  /**
+   * Jacobus sells accessory bag slots two at a time, at a price that steps up as you buy
+   * more. Tiers below are from the wiki; the cumulative total they produce
+   * (1.5M + 4x5M + 5x8M + 10x12M + 79x20M) is exactly 1,761,500,000, which is the figure
+   * the wiki states independently for maxing him out — so the tiers reconcile.
+   *
+   * `bought` is how many upgrades the player has already purchased (0 = none yet).
+   */
+  const JACOBUS_TIERS = [
+    { upTo: 1, cost: 1_500_000 },
+    { upTo: 5, cost: 5_000_000 },
+    { upTo: 10, cost: 8_000_000 },
+    { upTo: 20, cost: 12_000_000 },
+    { upTo: 99, cost: 20_000_000 },
+  ];
+  const JACOBUS_SLOTS_PER_UPGRADE = 2;
+  const JACOBUS_MAX_UPGRADES = 99;
+
+  function jacobusNext(bought) {
+    const n = Math.max(0, Math.floor(Number(bought) || 0)) + 1;
+    if (n > JACOBUS_MAX_UPGRADES) return null;          // already maxed
+    const tier = JACOBUS_TIERS.find((t) => n <= t.upTo);
+    return { upgrade: n, slots: JACOBUS_SLOTS_PER_UPGRADE, cost: tier.cost };
+  }
+
+  /**
+   * What to do when the bag is full.
+   *
+   * Every other view assumes an empty slot is waiting, which is useless advice once the
+   * bag is packed: adding anything means taking something out. Three kinds of move, and
+   * they are genuinely different:
+   *
+   *   - dead weight    an accessory outranked inside its own family. Removing it costs
+   *                    nothing at all, so it is always the first slot to reclaim.
+   *   - upgrade        a higher tier of a family you already hold. Slot-neutral — the old
+   *                    one comes out as the new one goes in — so it works even at 0 free.
+   *   - swap           a brand-new family. Needs a slot, so it displaces your weakest
+   *                    contributor, and only counts if it beats what it pushes out.
+   *
+   * `capacity` of 0 means the player has not said, and everything is treated as a plain
+   * addition, which is what the rest of the app already assumes.
+   */
+  function capacityPlan(cat, owned, prices, opts) {
+    const capacity = Number(opts?.capacity) || 0;
+    const contacts = opts?.contacts || 0;
+    const byId = cat.byId;
+
+    const held = Object.keys(owned).length;
+    const dead = slotPlan(cat, owned, prices, opts).dead;
+    const deadIds = new Set(dead.map((d) => d.id));
+
+    // Reclaiming dead weight is free, so it counts toward the space available.
+    const free = capacity ? Math.max(0, capacity - held) + dead.length : Infinity;
+    const full = capacity > 0 && free <= 0;
+
+    const reachable = offers(cat, owned, prices, opts).filter((o) => !o.locked);
+    // fromMp > 0 means this family already contributes, so the purchase replaces a member
+    // rather than claiming a new slot.
+    const upgrades = reachable.filter((o) => o.fromMp > 0);
+    const additions = reachable.filter((o) => o.fromMp === 0);
+
+    // The weakest things in the bag are what a brand-new accessory would displace.
+    const evalNow = evaluate(cat, owned, opts);
+    const bench = evalNow.families
+      .map((f) => ({
+        id: f.best.id,
+        name: byId[f.best.id].name,
+        rarity: byId[f.best.id].rarity,
+        mp: f.best.mp,
+        family: f.key,
+      }))
+      .filter((c) => !deadIds.has(c.id))
+      .sort((a, b) => a.mp - b.mp);
+
+    // Pair the biggest additions against the weakest holdings, each used once.
+    const bestAdditions = [...additions].sort((a, b) => b.toMp - a.toMp || a.cost - b.cost);
+    const swaps = [];
+    const usedFamily = new Set();
+    let benchIdx = 0;
+
+    for (const o of bestAdditions) {
+      if (benchIdx >= bench.length) break;
+      if (usedFamily.has(o.family)) continue;
+      const out = bench[benchIdx];
+      const net = o.toMp - out.mp;
+      if (net <= 0) break;                 // sorted descending: nothing after this wins either
+      usedFamily.add(o.family);
+      benchIdx++;
+      swaps.push({
+        ...o,
+        replaces: out,
+        netGain: net,
+        coinsPerNet: o.cost / net,
+      });
+    }
+    swaps.sort((a, b) => a.coinsPerNet - b.coinsPerNet);
+
+    // Buying slots is itself a purchase that competes on coins per power. Swapping keeps
+    // only the difference between the new accessory and the one it pushes out; paying
+    // Jacobus keeps the whole thing. Whether that is worth it depends entirely on how
+    // strong the accessory you would have displaced was.
+    let slotBuy = null;
+    if (full) {
+      const next = jacobusNext(opts?.jacobusBought);
+      if (next) {
+        const take = bestAdditions.filter((o, i, arr) =>
+          arr.findIndex((x) => x.family === o.family) === i).slice(0, next.slots);
+        const gain = take.reduce((n, o) => n + o.toMp, 0);
+        const spendOnItems = take.reduce((n, o) => n + o.cost, 0);
+        if (gain > 0) {
+          slotBuy = {
+            ...next,
+            fills: take,
+            gain,
+            spendOnItems,
+            totalCost: next.cost + spendOnItems,
+            coinsPerMp: (next.cost + spendOnItems) / gain,
+          };
+          // The like-for-like comparison: the same accessories bought as swaps instead.
+          const rival = swaps.slice(0, next.slots);
+          const rivalGain = rival.reduce((n, x) => n + x.netGain, 0);
+          const rivalCost = rival.reduce((n, x) => n + x.cost, 0);
+          slotBuy.swapGain = rivalGain;
+          slotBuy.swapCoinsPerMp = rivalGain > 0 ? rivalCost / rivalGain : Infinity;
+          slotBuy.worthIt = slotBuy.coinsPerMp < slotBuy.swapCoinsPerMp;
+          slotBuy.keptAP = gain - rivalGain;   // power you do not have to throw away
+        }
+      }
+    }
+
+    return {
+      capacity, held, free: capacity ? free : null, full,
+      dead,
+      upgrades: upgrades.sort((a, b) => a.coinsPerMp - b.coinsPerMp),
+      swaps,
+      slotBuy,
+      netGain: swaps.reduce((n, x) => n + x.netGain, 0),
+      spend: swaps.reduce((n, x) => n + x.cost, 0),
+    };
+  }
+
   /** Index a raw accessories.json for fast lookup. */
   function index(doc) {
     return { ...doc, byId: Object.fromEntries(doc.accessories.map((a) => [a.id, a])) };
@@ -385,6 +528,6 @@
 
   return {
     index, powerOf, recombRarity, multiplier, evaluate, offers, maxTierOffers,
-    solveBudget, earnable, requirementStatus, slotPlan, bestPerFamily, SLAYER_NAME, TROPHY_RANK,
+    solveBudget, earnable, requirementStatus, slotPlan, capacityPlan, jacobusNext, bestPerFamily, SLAYER_NAME, TROPHY_RANK,
   };
 });

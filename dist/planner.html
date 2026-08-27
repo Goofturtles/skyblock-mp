@@ -153,6 +153,10 @@ h1 {
 .entry.locked { box-shadow: inset 2px 0 0 var(--alert); }
 .chip.locked { color: var(--alert); border-color: #5c3f28; }
 .dead-mark { color: var(--alert); font-weight: 600; }
+/* A swap row has to read as an exchange, not a purchase. */
+.swap-out { color: var(--alert); }
+.swap-in { color: var(--gain); }
+.entry.swap { box-shadow: inset 2px 0 0 var(--accent-deep); }
 .slot-head { margin: 18px 0 8px; font-size: 14px; font-weight: 600; line-height: 1.45; }
 .slot-head .sub { color: var(--ink-3); font-weight: 400; font-size: 12.5px; margin-left: 7px; }
 
@@ -510,6 +514,14 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
       <label class="field">
         <span class="field-label">Contacts</span>
         <input id="contacts" type="number" min="0" value="0">
+      </label>
+      <label class="field">
+        <span class="field-label">Bag slots</span>
+        <input id="capacity" type="number" min="0" max="300" value="0" title="How many accessory bag slots you have. Leave at 0 if you would rather not say.">
+      </label>
+      <label class="field">
+        <span class="field-label">Jacobus buys</span>
+        <input id="jacobus" type="number" min="0" max="99" value="0" title="How many accessory bag upgrades you have already bought from Jacobus. Sets the price of the next two slots.">
       </label>
       <label class="switch"><input id="useRecomb" type="checkbox" checked><span>Consider recombobulating</span></label>
     </div>
@@ -1053,6 +1065,149 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     };
   }
 
+
+
+  /**
+   * Jacobus sells accessory bag slots two at a time, at a price that steps up as you buy
+   * more. Tiers below are from the wiki; the cumulative total they produce
+   * (1.5M + 4x5M + 5x8M + 10x12M + 79x20M) is exactly 1,761,500,000, which is the figure
+   * the wiki states independently for maxing him out — so the tiers reconcile.
+   *
+   * `bought` is how many upgrades the player has already purchased (0 = none yet).
+   */
+  const JACOBUS_TIERS = [
+    { upTo: 1, cost: 1_500_000 },
+    { upTo: 5, cost: 5_000_000 },
+    { upTo: 10, cost: 8_000_000 },
+    { upTo: 20, cost: 12_000_000 },
+    { upTo: 99, cost: 20_000_000 },
+  ];
+  const JACOBUS_SLOTS_PER_UPGRADE = 2;
+  const JACOBUS_MAX_UPGRADES = 99;
+
+  function jacobusNext(bought) {
+    const n = Math.max(0, Math.floor(Number(bought) || 0)) + 1;
+    if (n > JACOBUS_MAX_UPGRADES) return null;          // already maxed
+    const tier = JACOBUS_TIERS.find((t) => n <= t.upTo);
+    return { upgrade: n, slots: JACOBUS_SLOTS_PER_UPGRADE, cost: tier.cost };
+  }
+
+  /**
+   * What to do when the bag is full.
+   *
+   * Every other view assumes an empty slot is waiting, which is useless advice once the
+   * bag is packed: adding anything means taking something out. Three kinds of move, and
+   * they are genuinely different:
+   *
+   *   - dead weight    an accessory outranked inside its own family. Removing it costs
+   *                    nothing at all, so it is always the first slot to reclaim.
+   *   - upgrade        a higher tier of a family you already hold. Slot-neutral — the old
+   *                    one comes out as the new one goes in — so it works even at 0 free.
+   *   - swap           a brand-new family. Needs a slot, so it displaces your weakest
+   *                    contributor, and only counts if it beats what it pushes out.
+   *
+   * `capacity` of 0 means the player has not said, and everything is treated as a plain
+   * addition, which is what the rest of the app already assumes.
+   */
+  function capacityPlan(cat, owned, prices, opts) {
+    const capacity = Number(opts?.capacity) || 0;
+    const contacts = opts?.contacts || 0;
+    const byId = cat.byId;
+
+    const held = Object.keys(owned).length;
+    const dead = slotPlan(cat, owned, prices, opts).dead;
+    const deadIds = new Set(dead.map((d) => d.id));
+
+    // Reclaiming dead weight is free, so it counts toward the space available.
+    const free = capacity ? Math.max(0, capacity - held) + dead.length : Infinity;
+    const full = capacity > 0 && free <= 0;
+
+    const reachable = offers(cat, owned, prices, opts).filter((o) => !o.locked);
+    // fromMp > 0 means this family already contributes, so the purchase replaces a member
+    // rather than claiming a new slot.
+    const upgrades = reachable.filter((o) => o.fromMp > 0);
+    const additions = reachable.filter((o) => o.fromMp === 0);
+
+    // The weakest things in the bag are what a brand-new accessory would displace.
+    const evalNow = evaluate(cat, owned, opts);
+    const bench = evalNow.families
+      .map((f) => ({
+        id: f.best.id,
+        name: byId[f.best.id].name,
+        rarity: byId[f.best.id].rarity,
+        mp: f.best.mp,
+        family: f.key,
+      }))
+      .filter((c) => !deadIds.has(c.id))
+      .sort((a, b) => a.mp - b.mp);
+
+    // Pair the biggest additions against the weakest holdings, each used once.
+    const bestAdditions = [...additions].sort((a, b) => b.toMp - a.toMp || a.cost - b.cost);
+    const swaps = [];
+    const usedFamily = new Set();
+    let benchIdx = 0;
+
+    for (const o of bestAdditions) {
+      if (benchIdx >= bench.length) break;
+      if (usedFamily.has(o.family)) continue;
+      const out = bench[benchIdx];
+      const net = o.toMp - out.mp;
+      if (net <= 0) break;                 // sorted descending: nothing after this wins either
+      usedFamily.add(o.family);
+      benchIdx++;
+      swaps.push({
+        ...o,
+        replaces: out,
+        netGain: net,
+        coinsPerNet: o.cost / net,
+      });
+    }
+    swaps.sort((a, b) => a.coinsPerNet - b.coinsPerNet);
+
+    // Buying slots is itself a purchase that competes on coins per power. Swapping keeps
+    // only the difference between the new accessory and the one it pushes out; paying
+    // Jacobus keeps the whole thing. Whether that is worth it depends entirely on how
+    // strong the accessory you would have displaced was.
+    let slotBuy = null;
+    if (full) {
+      const next = jacobusNext(opts?.jacobusBought);
+      if (next) {
+        const take = bestAdditions.filter((o, i, arr) =>
+          arr.findIndex((x) => x.family === o.family) === i).slice(0, next.slots);
+        const gain = take.reduce((n, o) => n + o.toMp, 0);
+        const spendOnItems = take.reduce((n, o) => n + o.cost, 0);
+        if (gain > 0) {
+          slotBuy = {
+            ...next,
+            fills: take,
+            gain,
+            spendOnItems,
+            totalCost: next.cost + spendOnItems,
+            coinsPerMp: (next.cost + spendOnItems) / gain,
+          };
+          // The like-for-like comparison: the same accessories bought as swaps instead.
+          const rival = swaps.slice(0, next.slots);
+          const rivalGain = rival.reduce((n, x) => n + x.netGain, 0);
+          const rivalCost = rival.reduce((n, x) => n + x.cost, 0);
+          slotBuy.swapGain = rivalGain;
+          slotBuy.swapCoinsPerMp = rivalGain > 0 ? rivalCost / rivalGain : Infinity;
+          slotBuy.worthIt = slotBuy.coinsPerMp < slotBuy.swapCoinsPerMp;
+          slotBuy.keptAP = gain - rivalGain;   // power you do not have to throw away
+        }
+      }
+    }
+
+    return {
+      capacity, held, free: capacity ? free : null, full,
+      dead,
+      upgrades: upgrades.sort((a, b) => a.coinsPerMp - b.coinsPerMp),
+      swaps,
+      slotBuy,
+      netGain: swaps.reduce((n, x) => n + x.netGain, 0),
+      spend: swaps.reduce((n, x) => n + x.cost, 0),
+    };
+  }
+
   /** Index a raw accessories.json for fast lookup. */
   function index(doc) {
     return { ...doc, byId: Object.fromEntries(doc.accessories.map((a) => [a.id, a])) };
@@ -1060,7 +1215,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
   return {
     index, powerOf, recombRarity, multiplier, evaluate, offers, maxTierOffers,
-    solveBudget, earnable, requirementStatus, slotPlan, bestPerFamily, SLAYER_NAME, TROPHY_RANK,
+    solveBudget, earnable, requirementStatus, slotPlan, capacityPlan, jacobusNext, bestPerFamily, SLAYER_NAME, TROPHY_RANK,
   };
 });
 </script>
@@ -1079,7 +1234,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const LS = { owned: "apl:owned", contacts: "apl:contacts", budget: "apl:budget", prices: "apl:prices", seen: "apl:seen", recomb: "apl:recomb", key: "apl:key", progress: "apl:progress", hideLocked: "apl:hideLocked" };
+  const LS = { owned: "apl:owned", contacts: "apl:contacts", budget: "apl:budget", prices: "apl:prices", seen: "apl:seen", recomb: "apl:recomb", key: "apl:key", progress: "apl:progress", hideLocked: "apl:hideLocked", capacity: "apl:capacity", jacobus: "apl:jacobus" };
   const SLAYERS = ["zombie", "spider", "wolf", "enderman", "blaze", "vampire"];
   const TROPHIES = ["FROG", "LAVA"];
   const COFL = "https://sky.coflnet.com/api";
@@ -1104,6 +1259,8 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     // What the player has unlocked. Absent means "not unlocked", so a gated accessory
     // stays hidden until they say otherwise rather than being recommended on a guess.
     progress: safeProgress(load(LS.progress, null)),
+    capacity: Number(load(LS.capacity, 0)) || 0,
+    jacobusBought: Number(load(LS.jacobus, 0)) || 0,
     hideLocked: load(LS.hideLocked, true),
   };
 
@@ -1565,7 +1722,10 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
   /* ---------------- derive ---------------- */
 
   function derive() {
-    const opts = { contacts: state.contacts, includeRecomb: $("useRecomb").checked, progress: state.progress };
+    const opts = {
+      contacts: state.contacts, includeRecomb: $("useRecomb").checked, progress: state.progress,
+      capacity: state.capacity, jacobusBought: state.jacobusBought,
+    };
     const evalNow = MP.evaluate(cat, state.owned, opts);
     const all = MP.offers(cat, state.owned, prices, opts);
     return { opts, evalNow, all, maxTier: MP.maxTierOffers(all), earn: MP.earnable(cat, state.owned, prices, opts) };
@@ -1779,9 +1939,21 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     box.hidden = dismissed || Object.keys(state.owned).length > 0;
   }
 
-  function renderValue({ all }) {
+  function renderValue(d) {
+    const { all } = d;
     const node = $("valueList");
     node.textContent = "";
+
+    // Telling someone to buy more when the bag is full is useless advice — nothing can
+    // go in until something comes out. Say so, and change what is being recommended.
+    const cap = MP.capacityPlan(cat, state.owned, prices, d.opts);
+    if (cap.full) { renderFullBag(node, cap); return; }
+    if (cap.capacity && cap.free <= 2) {
+      const warn = el("div", "callout warn");
+      warn.append(el("h3", null, `${cap.free} slot${cap.free === 1 ? "" : "s"} left of ${cap.capacity}`));
+      warn.append(el("p", null, "Once it is full this list switches to swaps — what to take out for what."));
+      node.append(warn);
+    }
     // One row per family: offers() emits a row per reachable tier, and listing both the
     // Ring and the Artifact above it reads as "buy both" when you would only ever buy one.
     // Collapse AFTER dropping what the player cannot get: choosing the best rate across
@@ -1942,6 +2114,78 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
   }
 
   const BAG_CAP = 300;
+
+  /**
+   * A full bag changes the question from "what should I buy" to "what should I trade".
+   * Three answers, in the order they are worth doing: reclaim slots that are already
+   * wasted, take the upgrades that cost no slot at all, then either swap out your weakest
+   * or pay Jacobus to stop having to.
+   */
+  function renderFullBag(node, cap) {
+    const head = el("div", "callout warn");
+    head.append(el("h3", null, `Your bag is full — ${cap.held} of ${cap.capacity} slots`));
+    head.append(el("p", null,
+      "Nothing new fits until something comes out, so this is what to trade rather than what to add."));
+    node.append(head);
+
+    if (cap.dead.length) {
+      const c = el("div", "callout good");
+      c.append(el("h3", null, `${cap.dead.length} slot${cap.dead.length === 1 ? "" : "s"} you can reclaim for free`));
+      c.append(el("p", null,
+        `${cap.dead.map((x) => x.name).join(", ")} — outranked inside ${cap.dead.length === 1 ? "its" : "their"} own family, so removing ${cap.dead.length === 1 ? "it" : "them"} costs no power. See the Slots tab.`));
+      node.append(c);
+    }
+
+    // Paying Jacobus keeps the whole accessory instead of only the difference over what
+    // it displaced. Worth it exactly when that saved power is cheaper bought than lost.
+    if (cap.slotBuy) {
+      const sb = cap.slotBuy;
+      const c = el("div", "callout" + (sb.worthIt ? " good" : ""));
+      c.append(el("h3", null, sb.worthIt
+        ? `Buy ${sb.slots} more slots from Jacobus — ${coins(sb.cost)}`
+        : `Buying slots from Jacobus is not worth it yet`));
+      c.append(el("p", null, sb.worthIt
+        ? `Upgrade ${sb.upgrade} costs ${coins(sb.cost)} for ${sb.slots} slots. Filling them with ${sb.fills.map((f) => f.name).join(" and ")} `
+          + `gains ${sb.gain} AP for ${coins(sb.totalCost)} all in — ${coins(sb.coinsPerMp)} per point. Swapping instead would net only `
+          + `${sb.swapGain} AP, because you throw away the ${sb.keptAP} AP you displace.`
+        : `Upgrade ${sb.upgrade} costs ${coins(sb.cost)} for ${sb.slots} slots (${coins(sb.coinsPerMp)} per point all in). `
+          + `Swapping your weakest out is cheaper at ${coins(sb.swapCoinsPerMp)} per point, because what you would displace is not worth much.`));
+      node.append(c);
+    }
+
+    if (cap.upgrades.length) {
+      node.append(el("h3", "slot-head", `Upgrades that cost no slot (${cap.upgrades.length})`));
+      const sub = el("p", "note", "A higher tier of a family you already hold — the old one comes out as the new one goes in.");
+      node.append(sub);
+      const t = asTable(el("div", "ledger"));
+      header(t, "value");
+      fill(t, applyView(cap.upgrades).slice(0, CAP), entry, "");
+      node.append(t);
+    }
+
+    node.append(el("h3", "slot-head", `Swaps worth making (${cap.swaps.length})`));
+    node.append(el("p", "note", "Each takes out your weakest accessory to make room. Ranked by coins per point of net gain, after what you give up."));
+    const swapTable = asTable(el("div", "ledger"));
+    fill(swapTable, cap.swaps.slice(0, CAP), (sw, i) => {
+      const row = entry(sw, i);
+      row.classList.add("swap");
+      const l2 = row.querySelector(".line2");
+      if (l2) {
+        l2.textContent = "";
+        const out = el("span", "swap-out", `out: ${sw.replaces.name} (${sw.replaces.mp} AP)`);
+        const inn = el("span", "swap-in", `in: ${sw.name} (${sw.toMp} AP)`);
+        l2.append(out, el("span", "sep", "→"), inn, el("span", "sep", "·"),
+          el("span", "gain", `net +${sw.netGain} AP`));
+      }
+      // The headline number must be the net gain, not the raw one, or the ranking lies.
+      const rate = row.querySelector(".c-rate");
+      if (rate) { rate.textContent = coins(sw.coinsPerNet); rate.append(el("span", "unit", "/AP")); }
+      const power = row.querySelector(".c-power");
+      if (power) power.textContent = "+" + sw.netGain;
+      return row;
+    }, "No swap is worth it — everything you could buy is weaker than what you would have to remove.");
+    node.append(swapTable);
+  }
 
   /**
    * The bag has a fixed number of slots, so an accessory that loses to a higher tier in
@@ -2144,6 +2388,19 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     });
     $("useRecomb").checked = load(LS.recomb, true);
     $("useRecomb").addEventListener("change", () => { save(LS.recomb, $("useRecomb").checked); render(); });
+    for (const [id, key, set] of [
+      ["capacity", LS.capacity, (v) => { state.capacity = v; }],
+      ["jacobus", LS.jacobus, (v) => { state.jacobusBought = v; }],
+    ]) {
+      const input = $(id);
+      input.value = String(id === "capacity" ? state.capacity : state.jacobusBought);
+      input.addEventListener("input", () => {
+        const cap = Number(input.max) || Infinity;
+        set(Math.min(cap, Math.max(0, Number(input.value) || 0)));
+        save(key, id === "capacity" ? state.capacity : state.jacobusBought);
+        renderSoon();
+      });
+    }
     $("search").addEventListener("input", () => { state.search = $("search").value; renderSoon(); });
     const bagSoon = debounce(renderBag, 120);
     $("bagSearch").addEventListener("input", () => { state.bagSearch = $("bagSearch").value; bagSoon(); });

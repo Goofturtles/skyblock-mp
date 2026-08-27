@@ -18,7 +18,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="artifact/style.css?v=6168dee1">
+<link rel="stylesheet" href="artifact/style.css?v=ac7c0e7e">
 
 </head>
 <body>
@@ -167,6 +167,14 @@ if (!document.querySelector('meta[name="viewport"]')) {
         <span class="field-label">Contacts</span>
         <input id="contacts" type="number" min="0" value="0">
       </label>
+      <label class="field">
+        <span class="field-label">Bag slots</span>
+        <input id="capacity" type="number" min="0" max="300" value="0" title="How many accessory bag slots you have. Leave at 0 if you would rather not say.">
+      </label>
+      <label class="field">
+        <span class="field-label">Jacobus buys</span>
+        <input id="jacobus" type="number" min="0" max="99" value="0" title="How many accessory bag upgrades you have already bought from Jacobus. Sets the price of the next two slots.">
+      </label>
       <label class="switch"><input id="useRecomb" type="checkbox" checked><span>Consider recombobulating</span></label>
     </div>
 
@@ -239,8 +247,8 @@ if (!document.querySelector('meta[name="viewport"]')) {
 
 
 <script src="nbt.js?v=242a5ac2"></script>
-<script src="mp.js?v=86f46a38"></script>
-<script src="artifact/ui.js?v=24568451"></script>
+<script src="mp.js?v=67c57cf3"></script>
+<script src="artifact/ui.js?v=ac7582ac"></script>
 
 </body>
 </html>

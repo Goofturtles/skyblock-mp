@@ -159,6 +159,14 @@ if (!document.querySelector('meta[name="viewport"]')) {
         <span class="field-label">Contacts</span>
         <input id="contacts" type="number" min="0" value="0">
       </label>
+      <label class="field">
+        <span class="field-label">Bag slots</span>
+        <input id="capacity" type="number" min="0" max="300" value="0" title="How many accessory bag slots you have. Leave at 0 if you would rather not say.">
+      </label>
+      <label class="field">
+        <span class="field-label">Jacobus buys</span>
+        <input id="jacobus" type="number" min="0" max="99" value="0" title="How many accessory bag upgrades you have already bought from Jacobus. Sets the price of the next two slots.">
+      </label>
       <label class="switch"><input id="useRecomb" type="checkbox" checked><span>Consider recombobulating</span></label>
     </div>
 

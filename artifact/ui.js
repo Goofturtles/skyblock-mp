@@ -13,7 +13,7 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const LS = { owned: "apl:owned", contacts: "apl:contacts", budget: "apl:budget", prices: "apl:prices", seen: "apl:seen", recomb: "apl:recomb", key: "apl:key", progress: "apl:progress", hideLocked: "apl:hideLocked" };
+  const LS = { owned: "apl:owned", contacts: "apl:contacts", budget: "apl:budget", prices: "apl:prices", seen: "apl:seen", recomb: "apl:recomb", key: "apl:key", progress: "apl:progress", hideLocked: "apl:hideLocked", capacity: "apl:capacity", jacobus: "apl:jacobus" };
   const SLAYERS = ["zombie", "spider", "wolf", "enderman", "blaze", "vampire"];
   const TROPHIES = ["FROG", "LAVA"];
   const COFL = "https://sky.coflnet.com/api";
@@ -38,6 +38,8 @@
     // What the player has unlocked. Absent means "not unlocked", so a gated accessory
     // stays hidden until they say otherwise rather than being recommended on a guess.
     progress: safeProgress(load(LS.progress, null)),
+    capacity: Number(load(LS.capacity, 0)) || 0,
+    jacobusBought: Number(load(LS.jacobus, 0)) || 0,
     hideLocked: load(LS.hideLocked, true),
   };
 
@@ -499,7 +501,10 @@
   /* ---------------- derive ---------------- */
 
   function derive() {
-    const opts = { contacts: state.contacts, includeRecomb: $("useRecomb").checked, progress: state.progress };
+    const opts = {
+      contacts: state.contacts, includeRecomb: $("useRecomb").checked, progress: state.progress,
+      capacity: state.capacity, jacobusBought: state.jacobusBought,
+    };
     const evalNow = MP.evaluate(cat, state.owned, opts);
     const all = MP.offers(cat, state.owned, prices, opts);
     return { opts, evalNow, all, maxTier: MP.maxTierOffers(all), earn: MP.earnable(cat, state.owned, prices, opts) };
@@ -713,9 +718,21 @@
     box.hidden = dismissed || Object.keys(state.owned).length > 0;
   }
 
-  function renderValue({ all }) {
+  function renderValue(d) {
+    const { all } = d;
     const node = $("valueList");
     node.textContent = "";
+
+    // Telling someone to buy more when the bag is full is useless advice — nothing can
+    // go in until something comes out. Say so, and change what is being recommended.
+    const cap = MP.capacityPlan(cat, state.owned, prices, d.opts);
+    if (cap.full) { renderFullBag(node, cap); return; }
+    if (cap.capacity && cap.free <= 2) {
+      const warn = el("div", "callout warn");
+      warn.append(el("h3", null, `${cap.free} slot${cap.free === 1 ? "" : "s"} left of ${cap.capacity}`));
+      warn.append(el("p", null, "Once it is full this list switches to swaps — what to take out for what."));
+      node.append(warn);
+    }
     // One row per family: offers() emits a row per reachable tier, and listing both the
     // Ring and the Artifact above it reads as "buy both" when you would only ever buy one.
     // Collapse AFTER dropping what the player cannot get: choosing the best rate across
@@ -876,6 +893,78 @@
   }
 
   const BAG_CAP = 300;
+
+  /**
+   * A full bag changes the question from "what should I buy" to "what should I trade".
+   * Three answers, in the order they are worth doing: reclaim slots that are already
+   * wasted, take the upgrades that cost no slot at all, then either swap out your weakest
+   * or pay Jacobus to stop having to.
+   */
+  function renderFullBag(node, cap) {
+    const head = el("div", "callout warn");
+    head.append(el("h3", null, `Your bag is full — ${cap.held} of ${cap.capacity} slots`));
+    head.append(el("p", null,
+      "Nothing new fits until something comes out, so this is what to trade rather than what to add."));
+    node.append(head);
+
+    if (cap.dead.length) {
+      const c = el("div", "callout good");
+      c.append(el("h3", null, `${cap.dead.length} slot${cap.dead.length === 1 ? "" : "s"} you can reclaim for free`));
+      c.append(el("p", null,
+        `${cap.dead.map((x) => x.name).join(", ")} — outranked inside ${cap.dead.length === 1 ? "its" : "their"} own family, so removing ${cap.dead.length === 1 ? "it" : "them"} costs no power. See the Slots tab.`));
+      node.append(c);
+    }
+
+    // Paying Jacobus keeps the whole accessory instead of only the difference over what
+    // it displaced. Worth it exactly when that saved power is cheaper bought than lost.
+    if (cap.slotBuy) {
+      const sb = cap.slotBuy;
+      const c = el("div", "callout" + (sb.worthIt ? " good" : ""));
+      c.append(el("h3", null, sb.worthIt
+        ? `Buy ${sb.slots} more slots from Jacobus — ${coins(sb.cost)}`
+        : `Buying slots from Jacobus is not worth it yet`));
+      c.append(el("p", null, sb.worthIt
+        ? `Upgrade ${sb.upgrade} costs ${coins(sb.cost)} for ${sb.slots} slots. Filling them with ${sb.fills.map((f) => f.name).join(" and ")} `
+          + `gains ${sb.gain} AP for ${coins(sb.totalCost)} all in — ${coins(sb.coinsPerMp)} per point. Swapping instead would net only `
+          + `${sb.swapGain} AP, because you throw away the ${sb.keptAP} AP you displace.`
+        : `Upgrade ${sb.upgrade} costs ${coins(sb.cost)} for ${sb.slots} slots (${coins(sb.coinsPerMp)} per point all in). `
+          + `Swapping your weakest out is cheaper at ${coins(sb.swapCoinsPerMp)} per point, because what you would displace is not worth much.`));
+      node.append(c);
+    }
+
+    if (cap.upgrades.length) {
+      node.append(el("h3", "slot-head", `Upgrades that cost no slot (${cap.upgrades.length})`));
+      const sub = el("p", "note", "A higher tier of a family you already hold — the old one comes out as the new one goes in.");
+      node.append(sub);
+      const t = asTable(el("div", "ledger"));
+      header(t, "value");
+      fill(t, applyView(cap.upgrades).slice(0, CAP), entry, "");
+      node.append(t);
+    }
+
+    node.append(el("h3", "slot-head", `Swaps worth making (${cap.swaps.length})`));
+    node.append(el("p", "note", "Each takes out your weakest accessory to make room. Ranked by coins per point of net gain, after what you give up."));
+    const swapTable = asTable(el("div", "ledger"));
+    fill(swapTable, cap.swaps.slice(0, CAP), (sw, i) => {
+      const row = entry(sw, i);
+      row.classList.add("swap");
+      const l2 = row.querySelector(".line2");
+      if (l2) {
+        l2.textContent = "";
+        const out = el("span", "swap-out", `out: ${sw.replaces.name} (${sw.replaces.mp} AP)`);
+        const inn = el("span", "swap-in", `in: ${sw.name} (${sw.toMp} AP)`);
+        l2.append(out, el("span", "sep", "→"), inn, el("span", "sep", "·"),
+          el("span", "gain", `net +${sw.netGain} AP`));
+      }
+      // The headline number must be the net gain, not the raw one, or the ranking lies.
+      const rate = row.querySelector(".c-rate");
+      if (rate) { rate.textContent = coins(sw.coinsPerNet); rate.append(el("span", "unit", "/AP")); }
+      const power = row.querySelector(".c-power");
+      if (power) power.textContent = "+" + sw.netGain;
+      return row;
+    }, "No swap is worth it — everything you could buy is weaker than what you would have to remove.");
+    node.append(swapTable);
+  }
 
   /**
    * The bag has a fixed number of slots, so an accessory that loses to a higher tier in
@@ -1078,6 +1167,19 @@
     });
     $("useRecomb").checked = load(LS.recomb, true);
     $("useRecomb").addEventListener("change", () => { save(LS.recomb, $("useRecomb").checked); render(); });
+    for (const [id, key, set] of [
+      ["capacity", LS.capacity, (v) => { state.capacity = v; }],
+      ["jacobus", LS.jacobus, (v) => { state.jacobusBought = v; }],
+    ]) {
+      const input = $(id);
+      input.value = String(id === "capacity" ? state.capacity : state.jacobusBought);
+      input.addEventListener("input", () => {
+        const cap = Number(input.max) || Infinity;
+        set(Math.min(cap, Math.max(0, Number(input.value) || 0)));
+        save(key, id === "capacity" ? state.capacity : state.jacobusBought);
+        renderSoon();
+      });
+    }
     $("search").addEventListener("input", () => { state.search = $("search").value; renderSoon(); });
     const bagSoon = debounce(renderBag, 120);
     $("bagSearch").addEventListener("input", () => { state.bagSearch = $("bagSearch").value; bagSoon(); });
