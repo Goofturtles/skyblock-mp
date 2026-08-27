@@ -48,6 +48,10 @@
 
 * { box-sizing: border-box; }
 
+/* .onboard sets display:grid, which outranks the UA [hidden] rule — without this the
+   onboarding card can never be dismissed. Applies to every hidden element on the page. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--ground);
@@ -96,6 +100,20 @@ h1 {
 @keyframes pulse { 50% { opacity: .3; } }
 
 .hint { color: var(--ink-3); font-size: 12.5px; line-height: 1.5; }
+
+/* ---------- lookup ---------- */
+
+.lookup { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.lookup input { width: 190px; font-family: var(--display); }
+
+.keybox {
+  margin-top: 12px; padding: 14px 16px; background: var(--surface);
+  border: 1px solid var(--rule); border-radius: var(--radius); max-width: 720px;
+}
+.keybox p { margin: 0 0 10px; color: var(--ink-2); font-size: 13px; line-height: 1.6; }
+.keybox p:last-child { margin-bottom: 0; }
+.keybox .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.keybox input { flex: 1 1 300px; font-size: 12.5px; }
 
 /* ---------- summary ---------- */
 
@@ -178,7 +196,9 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 .lhead span, .lhead button {
   color: var(--ink-3); font-family: var(--display); font-size: 11px; font-weight: 500;
   letter-spacing: .09em; text-transform: uppercase; line-height: 1.6;
-  background: none; border: none; padding: 0; text-align: right; cursor: pointer;
+  background: none; border: none; text-align: right; cursor: pointer;
+  /* 24px minimum touch target — these sit shoulder to shoulder. */
+  min-height: 24px; padding: 3px 0; border-radius: 5px;
 }
 
 .lhead .h-name { text-align: left; }
@@ -219,7 +239,9 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
 .entry.pick { grid-template-columns: 3px auto minmax(0, 1fr) auto; padding-right: 14px; }
 .entry.own { border-color: #2f5c46; background: #142118; }
-.own-box { width: 17px; height: 17px; accent-color: var(--gain); cursor: pointer; }
+.own-hit { display: grid; place-items: center; min-width: 30px; min-height: 30px; cursor: pointer; }
+.own-box { width: 18px; height: 18px; accent-color: var(--gain); cursor: pointer; }
+.recomb-tick { min-height: 30px; }
 
 .recomb-tick { display: flex; gap: 6px; align-items: center; color: var(--ink-3); font-size: 12px; line-height: 1.5; cursor: pointer; white-space: nowrap; padding: 10px 0; }
 .recomb-tick input { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; flex: none; }

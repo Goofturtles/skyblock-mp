@@ -17,6 +17,7 @@ const read = (p) => fs.readFileSync(path.join(__dirname, p), "utf8");
 const catalogue = JSON.parse(read("data/accessories.json"));
 const snapshot = JSON.parse(read("data/prices-snapshot.json"));
 const engine = read("mp.js");
+const nbt = read("nbt.js");
 const shell = read("artifact/shell.html");
 const ui = read("artifact/ui.js");
 const css = read("artifact/style.css");
@@ -26,15 +27,23 @@ const css = read("artifact/style.css");
 // this, a name containing `</script` would break out of the tag it is embedded in.
 const embed = (value) => JSON.stringify(value).replace(/</g, "\\u003c");
 
+// The Artifact host supplies its own <head> and drops a stray one, but a standalone copy
+// of this file needs the charset (or "Can't buy" and "×" mojibake under file://) and a
+// lang attribute.
+const head = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+  + '<meta name="description" content="Ranks every Hypixel SkyBlock accessory by coins per Accessory Power.">\n'
+  + '</head>\n<body>\n';
+
 // Each placeholder swallows the `null` after it, so the shell stays valid JS on its own.
-const out = "<!doctype html>\n" + shell
+const out = head + shell
   .replace("/*__CSS__*/", () => css)
   .replace("/*__CATALOGUE__*/null", () => embed(catalogue))
   .replace("/*__PRICES__*/null", () => embed(snapshot))
+  .replace("/*__NBT__*/", () => nbt)
   .replace("/*__ENGINE__*/", () => engine)
   .replace("/*__UI__*/", () => ui);
 
-for (const token of ["/*__CSS__*/", "/*__CATALOGUE__*/", "/*__PRICES__*/", "/*__ENGINE__*/", "/*__UI__*/"]) {
+for (const token of ["/*__CSS__*/", "/*__CATALOGUE__*/", "/*__PRICES__*/", "/*__NBT__*/", "/*__ENGINE__*/", "/*__UI__*/"]) {
   if (out.includes(token)) { console.error(`placeholder ${token} was never substituted`); process.exit(1); }
 }
 

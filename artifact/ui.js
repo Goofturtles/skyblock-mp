@@ -13,7 +13,7 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const LS = { owned: "apl:owned", contacts: "apl:contacts", budget: "apl:budget", prices: "apl:prices", seen: "apl:seen" };
+  const LS = { owned: "apl:owned", contacts: "apl:contacts", budget: "apl:budget", prices: "apl:prices", seen: "apl:seen", recomb: "apl:recomb", key: "apl:key" };
   const COFL = "https://sky.coflnet.com/api";
   const PRICE_TTL = 30 * 60 * 1000;
 
@@ -104,6 +104,7 @@
     // so fall through to the committed snapshot before giving up.
     if (!prices) prices = await firstOf(["api/prices", "data/prices-snapshot.json"]);
 
+    $("contacts").max = String(cat.rules.abiphoneContactsKnown);
     $("contacts").value = state.contacts;
     $("budget").value = load(LS.budget, "100m");
     wire();
@@ -156,7 +157,8 @@
         for (let attempt = 0; attempt <= RETRIES && !list; attempt++) {
           if (attempt) await sleep(300 * attempt * attempt);
           try {
-            const r = await fetch(`${COFL}/auctions/tag/${id}/active/bin`);
+            // One hung socket otherwise costs a third of the throughput.
+            const r = await fetch(`${COFL}/auctions/tag/${id}/active/bin`, { signal: AbortSignal.timeout(8000) });
             if (r.ok) list = await r.json();
           } catch { /* transient — retry */ }
         }
@@ -182,7 +184,9 @@
         }
 
         done++;
-        $("progressFill").style.width = ((done / ids.length) * 100).toFixed(1) + "%";
+        const pct = (done / ids.length) * 100;
+        $("progressFill").style.width = pct.toFixed(1) + "%";
+        $("progress").setAttribute("aria-valuenow", String(Math.round(pct)));
         $("stampText").textContent = `fetching live prices… ${done}/${ids.length}`;
       }
     };
@@ -203,17 +207,26 @@
     $("progress").hidden = true;
     $("progressFill").style.width = "0%";
 
-    if (blocked || ok === 0) {
-      note("Live prices are blocked on this page — the published Artifact runs under a policy that forbids "
-        + "calls to other sites. The snapshot below still works. Run the local copy for live Auction House data.", "warn");
+    // A partial sweep is worse than the snapshot it would replace, and caching it would
+    // poison the next 30 minutes. Keep what we had unless most of the sweep landed.
+    const ratio = ok / ids.length;
+    if (blocked || ratio < 0.7) {
+      note(blocked
+        ? "Could not reach the price service. If you are viewing this as a Claude Artifact, it blocks calls to "
+          + "other sites by design — the live site at goofturtles.github.io/skyblock-mp can fetch them. "
+          + "Otherwise it may be your connection. Existing prices are unchanged."
+        : `Only ${ok} of ${ids.length} accessories came back, so the existing prices were kept rather than `
+          + "replaced with a partial set. Try again in a moment.", "warn");
       stamp();
       return;
     }
 
-    prices = { generated: Date.now(), source: "live", recombobulator, lowestBin };
+    // Merge over the previous set so ids that failed this round keep their last known price.
+    const merged = Object.assign(Object.create(null), prices.lowestBin || {}, lowestBin);
+    prices = { generated: Date.now(), source: "live", recombobulator, lowestBin: merged };
     save(LS.prices, prices);
     note(`Live prices in: ${Object.keys(lowestBin).length} listings across ${ok} accessories.`
-      + (failed ? ` ${failed} could not be reached.` : ""), "good");
+      + (failed ? ` ${failed} could not be reached and kept their previous price.` : ""), "good");
     stamp();
     render();
   }
@@ -225,6 +238,87 @@
     n.hidden = false;
     clearTimeout(note._t);
     note._t = setTimeout(() => { n.hidden = true; }, 9000);
+  }
+
+
+  /* ---------------- username lookup ---------------- */
+
+  /**
+   * Reads a player's accessory bag and ticks everything in it.
+   *
+   * Hypixel serves profile contents only to a key holder — there is no keyless route
+   * (SkyCrypt's public API is behind a WAF, and the community mirrors that do work strip
+   * inventories). The key lives in this browser and is sent only to api.hypixel.net.
+   */
+  async function loadProfile() {
+    const name = $("username").value.trim();
+    if (!name) { note("Type a Minecraft username first.", "warn"); $("username").focus(); return; }
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(name)) { note(`“${name}” is not a valid Minecraft username.`, "warn"); return; }
+
+    const key = load(LS.key, "");
+    if (!key) {
+      $("keybox").hidden = false;
+      note("Looking up a bag needs a free Hypixel API key — the panel below explains where to get one.", "warn");
+      $("apikey").focus();
+      return;
+    }
+
+    $("loadBtn").disabled = true;
+    try {
+      note(`Looking up ${name}…`);
+      const mj = await fetch(`https://api.ashcon.app/mojang/v2/user/${encodeURIComponent(name)}`);
+      if (!mj.ok) throw new Error(`No Minecraft account called “${name}”.`);
+      const { uuid, username } = await mj.json();
+      const flat = uuid.replace(/-/g, "");
+
+      note(`Fetching ${username}'s SkyBlock profiles…`);
+      const res = await fetch(`https://api.hypixel.net/v2/skyblock/profiles?uuid=${flat}&key=${encodeURIComponent(key)}`);
+      const data = await res.json().catch(() => ({}));
+      if (!data.success) {
+        throw new Error(data.cause === "Invalid API key"
+          ? "Hypixel rejected that API key. Check it under “API key”."
+          : (data.cause || `Hypixel returned HTTP ${res.status}.`));
+      }
+      if (!data.profiles || !data.profiles.length) throw new Error(`${username} has no SkyBlock profiles.`);
+
+      const profile = data.profiles.find((p) => p.selected) || data.profiles[0];
+      const member = profile.members && profile.members[flat];
+      if (!member) throw new Error("That profile holds no data for this player.");
+
+      const blob = (member.inventory && member.inventory.bag_contents && member.inventory.bag_contents.talisman_bag && member.inventory.bag_contents.talisman_bag.data)
+        || (member.talisman_bag && member.talisman_bag.data)
+        || (typeof member.talisman_bag === "string" ? member.talisman_bag : null);
+
+      if (!blob) {
+        throw new Error(`${username}'s accessory bag is hidden. In SkyBlock run /api and switch Inventory API on, then try again.`);
+      }
+
+      const items = await NBT.decodeItems(blob);
+      const owned = {};
+      let matched = 0, unknown = 0;
+      for (const it of items) {
+        const extra = it && it.tag && it.tag.ExtraAttributes;
+        if (!extra || !extra.id) continue;
+        if (!cat.byId[extra.id]) { unknown++; continue; }
+        const recomb = !!extra.rarity_upgrades;
+        // Duplicates are common; keep the recombobulated copy, it is the one that counts.
+        if (!owned[extra.id] || (recomb && !owned[extra.id].recomb)) owned[extra.id] = { recomb };
+        matched++;
+      }
+
+      if (!matched) throw new Error(`${username}'s accessory bag came back empty. Check Inventory API is on.`);
+
+      state.owned = owned;
+      state.bagOrder = [];
+      save(LS.owned, state.owned);
+      render();
+      note(`Loaded ${matched} accessories from ${username} (${profile.cute_name}).`
+        + (unknown ? ` ${unknown} items were not power-granting accessories.` : ""), "good");
+    } catch (e) {
+      note(String((e && e.message) || e), "warn");
+    } finally {
+      $("loadBtn").disabled = false;
+    }
   }
 
   /* ---------------- derive ---------------- */
@@ -272,10 +366,17 @@
     for (const [key, label, cls] of cols) {
       const b = el("button", cls);
       b.type = "button";
+      b.dataset.focusKey = "sort:" + key;   // header is rebuilt on every render
       b.append(document.createTextNode(label));
       const active = state.sort === key;
-      b.setAttribute("aria-sort", active ? (state.sortDir > 0 ? "ascending" : "descending") : "none");
-      if (active) b.append(el("span", "arrow", state.sortDir > 0 ? "▲" : "▼"));
+      // `gain` sorts high-to-low at dir 1, the others low-to-high; the glyph has to follow
+      // the data, not the flag.
+      const descending = active && ((key === "gain") === (state.sortDir > 0));
+      b.setAttribute("aria-pressed", String(active));
+      if (active) {
+        b.append(el("span", "arrow", descending ? "▼" : "▲"));
+        b.append(el("span", "sr", descending ? ", sorted descending" : ", sorted ascending"));
+      }
       b.addEventListener("click", () => {
         if (state.sort === key) state.sortDir *= -1;
         else { state.sort = key; state.sortDir = 1; }
@@ -427,8 +528,9 @@
 
     const node = $("planList");
     node.textContent = "";
-    header(node);
     const body = el("div", "ledger");
+    // No sort header here: the plan is an ordered shopping list, and re-sorting it would
+    // imply the order is arbitrary when it is the solver's output.
     fill(body, s.picks, entry, "Nothing fits that budget — the cheapest upgrade costs more.");
     node.append(body);
   }
@@ -519,17 +621,23 @@
     return q ? list.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q)) : list;
   }
 
+  const BAG_CAP = 300;
+
   function renderBag() {
     const list = bagList();
-    $("bagCount").textContent = `${Object.keys(state.owned).length} owned · ${list.length} shown`;
+    const shown = Math.min(list.length, BAG_CAP);
+    $("bagCount").textContent = `${Object.keys(state.owned).length} owned · showing ${shown} of ${list.length}`;
 
-    fill($("bagList"), list.slice(0, 300), (a) => {
+    fill($("bagList"), list.slice(0, BAG_CAP), (a) => {
       const has = state.owned[a.id];
       const row = el("div", "entry pick" + (has ? " own" : ""));
       const edge = el("div", "edge");
       edge.style.background = rarityVar(a.rarity);
       row.append(edge);
 
+      // Wrapped in a label so the tap target is 30px, not the checkbox's 17px — this is
+      // the primary interaction and most of it happens on a phone.
+      const hit = el("label", "own-hit");
       const box = el("input", "own-box");
       box.type = "checkbox";
       box.checked = !!has;
@@ -541,7 +649,8 @@
         save(LS.owned, state.owned);
         render();
       });
-      row.append(box);
+      hit.append(box);
+      row.append(hit);
 
       const body = el("div", "body");
       const l1 = el("div", "line1");
@@ -580,6 +689,12 @@
       }
       return row;
     }, "No accessory matches that search.");
+
+    // Silent truncation would hide 123 accessories and look like they do not exist.
+    if (list.length > BAG_CAP) {
+      $("bagList").append(el("div", "empty",
+        `${list.length - BAG_CAP} more not shown — search by name to reach them.`));
+    }
   }
 
   /* ---------------- tabs ---------------- */
@@ -628,7 +743,8 @@
       save(LS.contacts, state.contacts);
       render();
     });
-    $("useRecomb").addEventListener("change", render);
+    $("useRecomb").checked = load(LS.recomb, true);
+    $("useRecomb").addEventListener("change", () => { save(LS.recomb, $("useRecomb").checked); render(); });
     $("search").addEventListener("input", () => { state.search = $("search").value; render(); });
     $("bagSearch").addEventListener("input", () => { state.bagSearch = $("bagSearch").value; renderBag(); });
     $("bagClear").addEventListener("click", () => {
@@ -638,6 +754,25 @@
       render();
     });
     $("liveBtn").addEventListener("click", refreshLive);
+    $("loadBtn").addEventListener("click", loadProfile);
+    $("username").addEventListener("keydown", (e) => { if (e.key === "Enter") loadProfile(); });
+    $("keyBtn").addEventListener("click", () => {
+      const box = $("keybox");
+      box.hidden = !box.hidden;
+      if (!box.hidden) { $("apikey").value = load(LS.key, ""); $("apikey").focus(); }
+    });
+    $("saveKey").addEventListener("click", () => {
+      const v = $("apikey").value.trim();
+      save(LS.key, v);
+      $("keybox").hidden = true;
+      note(v ? "API key saved in this browser." : "API key cleared.", "good");
+      if (v && $("username").value.trim()) loadProfile();
+    });
+    $("clearKey").addEventListener("click", () => {
+      save(LS.key, "");
+      $("apikey").value = "";
+      note("API key cleared.", "good");
+    });
     $("startBtn").addEventListener("click", () => { selectTab("bag"); $("bagSearch").focus(); });
     $("skipBtn").addEventListener("click", () => { save(LS.seen, true); $("onboard").hidden = true; });
 

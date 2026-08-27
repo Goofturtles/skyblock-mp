@@ -19,6 +19,7 @@ const hash = (p) => crypto.createHash("sha256").update(fs.readFileSync(here(p)))
 const shell = fs.readFileSync(here("artifact/shell.html"), "utf8");
 const v = {
   css: hash("artifact/style.css"),
+  nbt: hash("nbt.js"),
   engine: hash("mp.js"),
   ui: hash("artifact/ui.js"),
 };
@@ -26,6 +27,7 @@ const v = {
 const body = shell
   .replace("<style>/*__CSS__*/</style>", `<link rel="stylesheet" href="artifact/style.css?v=${v.css}">`)
   .replace('<script>window.__CATALOGUE__ = /*__CATALOGUE__*/null; window.__PRICES__ = /*__PRICES__*/null;</script>', "")
+  .replace("<script>/*__NBT__*/</script>", `<script src="nbt.js?v=${v.nbt}"></script>`)
   .replace("<script>/*__ENGINE__*/</script>", `<script src="mp.js?v=${v.engine}"></script>`)
   .replace("<script>/*__UI__*/</script>", `<script src="artifact/ui.js?v=${v.ui}"></script>`);
 
@@ -39,9 +41,21 @@ const out =
   body.slice(split) +
   "\n</body>\n</html>\n";
 
-for (const token of ["/*__CSS__*/", "/*__ENGINE__*/", "/*__UI__*/", "__CATALOGUE__"]) {
+for (const token of ["/*__CSS__*/", "/*__NBT__*/", "/*__ENGINE__*/", "/*__UI__*/", "__CATALOGUE__"]) {
   if (out.includes(token)) { console.error(`placeholder ${token} was never substituted`); process.exit(1); }
 }
 
+// `--check` fails when the committed index.html no longer matches its sources, which is
+// how a forgotten rebuild would otherwise reach GitHub Pages as a stale asset hash.
+if (process.argv.includes("--check")) {
+  const current = fs.existsSync(here("index.html")) ? fs.readFileSync(here("index.html"), "utf8") : "";
+  if (current !== out) {
+    console.error("index.html is stale — run `node build-local.js`");
+    process.exit(1);
+  }
+  console.log("index.html is up to date");
+  process.exit(0);
+}
+
 fs.writeFileSync(here("index.html"), out);
-console.log(`wrote index.html  ${(out.length / 1024).toFixed(1)} KB  (css ${v.css}, engine ${v.engine}, ui ${v.ui})`);
+console.log(`wrote index.html  ${(out.length / 1024).toFixed(1)} KB  (css ${v.css}, ui ${v.ui})`);

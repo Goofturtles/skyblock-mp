@@ -132,14 +132,19 @@ async function handle(req, res) {
   const file = path.join(__dirname, p);
   if (file !== __dirname && !file.startsWith(__dirname + path.sep)) { res.writeHead(403).end("forbidden"); return; }
 
+  // This serves the whole project directory, so keep .git and friends out of it.
+  if (p.split("/").some((seg) => seg.startsWith("."))) { res.writeHead(403).end("forbidden"); return; }
+
   fs.readFile(file, (err, data) => {
-    if (err) { res.writeHead(404, { "content-type": "text/plain" }); res.end("404"); return; }
-    res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream", "cache-control": "no-store" });
-    res.end(data);
+    try {
+      if (err) { res.writeHead(404, { "content-type": "text/plain" }); res.end("404"); return; }
+      res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream", "cache-control": "no-store" });
+      res.end(data);
+    } catch { if (!res.headersSent) res.writeHead(500); res.end(); }
   });
 }
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`skyblock-mp  ->  http://localhost:${PORT}`);
   prices().then((p) => console.log(`warm cache: ${p.items} priced accessories in ${p.sweepMs}ms`)).catch(() => {});
 });

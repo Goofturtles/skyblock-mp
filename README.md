@@ -38,6 +38,8 @@ node build-local.js && node build-artifact.js
 
 ## Loading a bag by username
 
+Type a username, hit **Load my bag**, and it ticks every accessory you hold.
+
 Hypixel only serves profile contents to a key holder — there is no keyless route to a player's
 accessory bag any more (SkyCrypt's public API is behind a WAF, and Soopy's parsed profiles drop the
 bag). So the username lookup needs a **free Hypixel API key** from

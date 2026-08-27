@@ -18,7 +18,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="artifact/style.css?v=d056a219">
+<link rel="stylesheet" href="artifact/style.css?v=155102c5">
 
 </head>
 <body>
@@ -32,12 +32,17 @@ if (!document.querySelector('meta[name="viewport"]')) {
       </p>
     </div>
     <div class="pricebar">
+      <div class="lookup">
+        <input id="username" type="text" placeholder="Minecraft username" autocomplete="off" spellcheck="false" aria-label="Minecraft username">
+        <button id="loadBtn" class="primary" type="button">Load my bag</button>
+      </div>
       <div class="pricebar-row">
         <span class="stamp"><span class="led" id="led"></span><span id="stampText">loading…</span></span>
         <button id="liveBtn" type="button">Live prices</button>
+        <button id="keyBtn" type="button">API key</button>
       </div>
       <div class="pricebar-row">
-        <div class="progress" id="progress" hidden><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress" id="progress" role="progressbar" aria-label="Fetching prices" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div class="progress-fill" id="progressFill"></div></div>
       </div>
     </div>
   </div>
@@ -45,10 +50,29 @@ if (!document.querySelector('meta[name="viewport"]')) {
 
 <main class="wrap">
 
-  <div class="strip" aria-live="polite">
+  <div class="keybox" id="keybox" hidden>
+    <p>
+      Hypixel only hands a player's accessory bag to a key holder, so looking you up by name needs a
+      <strong>free Hypixel API key</strong>. Get one at
+      <a href="https://developer.hypixel.net/dashboard" target="_blank" rel="noopener noreferrer">developer.hypixel.net</a>
+      — sign in with your Minecraft account, create an app, copy the key. It is kept in this browser
+      and sent only to Hypixel.
+    </p>
+    <div class="row">
+      <input id="apikey" type="password" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off" spellcheck="false" aria-label="Hypixel API key">
+      <button id="saveKey" class="primary" type="button">Save</button>
+      <button id="clearKey" type="button">Clear</button>
+    </div>
+    <p>
+      You also need <strong>Inventory API</strong> switched on in SkyBlock (<code>/api</code> → API Settings),
+      or the bag comes back empty even with a valid key. No key? Everything still works — just tick what you own.
+    </p>
+  </div>
+
+  <div class="strip">
     <div class="cell">
       <div class="cell-label">Accessory Power</div>
-      <div class="cell-value accent" id="ap">0</div>
+      <div class="cell-value accent" id="ap" aria-live="polite" aria-atomic="true">0</div>
       <div class="cell-sub" id="apSub">tick what you own to personalise</div>
     </div>
     <div class="cell">
@@ -69,16 +93,16 @@ if (!document.querySelector('meta[name="viewport"]')) {
   </div>
   <div class="meter"><div class="meter-fill" id="meter"></div></div>
 
-  <div class="callout" id="note" hidden></div>
+  <div class="callout" id="note" role="status" aria-live="polite" hidden></div>
 
-  <nav class="tabs" id="tabs" role="tablist" aria-label="Views">
+  <div class="tabs" id="tabs" role="tablist" aria-label="Views">
     <button class="tab" role="tab" aria-selected="true" aria-controls="panel-value" data-tab="value">Best value <span class="count"></span></button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="panel-max" data-tab="max" tabindex="-1">Max tier <span class="count"></span></button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="panel-plan" data-tab="plan" tabindex="-1">Budget plan</button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="panel-earn" data-tab="earn" tabindex="-1">Can’t buy <span class="count"></span></button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="panel-free" data-tab="free" tabindex="-1">Free wins</button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="panel-bag" data-tab="bag" tabindex="-1">My bag <span class="count"></span></button>
-  </nav>
+  </div>
 
   <div class="panels">
 
@@ -110,7 +134,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
       </label>
       <label class="field">
         <span class="field-label">Contacts</span>
-        <input id="contacts" type="number" min="0" max="200" value="0">
+        <input id="contacts" type="number" min="0" value="0">
       </label>
       <label class="switch"><input id="useRecomb" type="checkbox" checked><span>Consider recombobulating</span></label>
     </div>
@@ -163,8 +187,9 @@ if (!document.querySelector('meta[name="viewport"]')) {
 </footer>
 
 
-<script src="mp.js?v=8b9bf201"></script>
-<script src="artifact/ui.js?v=f8345b47"></script>
+<script src="nbt.js?v=242a5ac2"></script>
+<script src="mp.js?v=5aa2eb2f"></script>
+<script src="artifact/ui.js?v=a5a696ac"></script>
 
 </body>
 </html>

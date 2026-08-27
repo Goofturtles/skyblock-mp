@@ -198,6 +198,11 @@
     const byId = cat.byId;
     const out = [];
 
+    // Keys look like "ID|RARITY|RECOMB"; collect the ids once instead of re-scanning
+    // every key for each of the 423 accessories.
+    const listed = new Set();
+    for (const k of Object.keys(low)) listed.add(k.slice(0, k.indexOf("|")));
+
     for (const [key, fam] of Object.entries(cat.families)) {
       let current = 0;
       for (const id of fam.members) {
@@ -208,8 +213,7 @@
       for (const id of fam.members) {
         const acc = byId[id];
         if (owned[id]) continue;
-        const purchasable = Object.keys(low).some((k) => k.startsWith(id + "|"));
-        if (purchasable) continue;
+        if (listed.has(id)) continue;
         const mp = powerOf(cat, acc, false, contacts);
         if (mp > current && (!best || mp > best.mp)) best = { id, mp, acc };
       }
