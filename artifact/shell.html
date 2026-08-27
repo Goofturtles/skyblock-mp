@@ -11,7 +11,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>/*__CSS__*/</style>
 
 <header class="masthead">
@@ -31,7 +31,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
       <div class="pricebar-row">
         <span class="stamp"><span class="led" id="led"></span><span id="stampText">loading…</span></span>
         <button id="liveBtn" type="button">Live prices</button>
-        <button id="keyBtn" type="button">API key</button>
+        <button id="keyBtn" type="button">Use my own key</button>
       </div>
       <div class="pricebar-row">
         <div class="progress" id="progress" role="progressbar" aria-label="Fetching prices" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div class="progress-fill" id="progressFill"></div></div>
@@ -44,11 +44,14 @@ if (!document.querySelector('meta[name="viewport"]')) {
 
   <div class="keybox" id="keybox" hidden>
     <p>
-      Hypixel only hands a player's accessory bag to a key holder, so looking you up by name needs a
-      <strong>free Hypixel API key</strong>. Get one at
-      <a href="https://developer.hypixel.net/dashboard" target="_blank" rel="noopener noreferrer">developer.hypixel.net</a>
-      — sign in with your Minecraft account, create an app, copy the key. It is kept in this browser
-      and sent only to Hypixel.
+      <strong>You do not need a key.</strong> Hypixel only hands a player's accessory bag to a key
+      holder, so this site keeps one on a small server of its own and does the lookup for you — the
+      same arrangement SkyCrypt uses. Just type your username.
+    </p>
+    <p>
+      Adding your own key here overrides that: the lookup then goes straight from this browser to
+      Hypixel and never touches the server. Get one free at
+      <a href="https://developer.hypixel.net/dashboard" target="_blank" rel="noopener noreferrer">developer.hypixel.net</a>.
     </p>
     <div class="row">
       <input id="apikey" type="password" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off" spellcheck="false" aria-label="Hypixel API key">
@@ -56,8 +59,8 @@ if (!document.querySelector('meta[name="viewport"]')) {
       <button id="clearKey" type="button">Clear</button>
     </div>
     <p>
-      You also need <strong>Inventory API</strong> switched on in SkyBlock (<code>/api</code> → API Settings),
-      or the bag comes back empty even with a valid key. No key? Everything still works — just tick what you own.
+      Either way you need <strong>Inventory API</strong> switched on in SkyBlock (<code>/api</code> → API Settings),
+      or the bag comes back empty. Prefer not to be looked up at all? Everything works if you just tick what you own.
     </p>
   </div>
 
@@ -175,7 +178,11 @@ if (!document.querySelector('meta[name="viewport"]')) {
     the Abicase adds 1 per 2 Abiphone contacts; and the Celestial Starstone gives nothing at all despite
     topping the Crux tree.
   </p>
-  <p>Item data from Hypixel's public resources, families from NotEnoughUpdates, prices from the Auction House. Nothing you tick leaves your browser.</p>
+  <p>
+    Item data from Hypixel's public resources, families from NotEnoughUpdates, prices swept from the
+    Auction House. What you tick stays in your browser. Looking up a username sends only that name —
+    to a UUID lookup (playerdb, minetools or ashcon) and to this site's bag service.
+  </p>
 </footer>
 
 <script>window.__CATALOGUE__ = /*__CATALOGUE__*/null; window.__PRICES__ = /*__PRICES__*/null;</script>

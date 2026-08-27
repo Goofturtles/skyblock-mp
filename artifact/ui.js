@@ -15,6 +15,9 @@
   const $ = (id) => document.getElementById(id);
   const LS = { owned: "apl:owned", contacts: "apl:contacts", budget: "apl:budget", prices: "apl:prices", seen: "apl:seen", recomb: "apl:recomb", key: "apl:key" };
   const COFL = "https://sky.coflnet.com/api";
+  // Holds the Hypixel key so visitors never need one, and sweeps the whole Auction
+  // House server-side because it is ~46 pages of ~2.5 MB.
+  const PROXY = "https://skyblock-mp-bag.onrender.com";
   const PRICE_TTL = 30 * 60 * 1000;
 
   let cat = null;
@@ -87,45 +90,100 @@
         const r = await fetch(u);
         if (!r.ok) continue;
         const j = await r.json();
-        if (j && j.lowestBin && Object.keys(j.lowestBin).length) return j;
+        if (j && j.lowestBin && Object.keys(j.lowestBin).length) return normalisePrices(j);
       } catch { /* try the next one */ }
     }
     return { generated: 0, lowestBin: {} };
   }
 
+  /**
+   * Three price sources with three vocabularies: the proxy sweep, the local server's
+   * own sweep (which calls the listing count `scanned`), and the baked snapshot.
+   * Normalise here so the stamp does not have to guess, and so a real sweep is never
+   * described as a snapshot.
+   */
+  function normalisePrices(j) {
+    if (j.listings == null && j.scanned != null) j.listings = j.scanned;
+    if (j.accessories == null && j.lowestBin) {
+      j.accessories = new Set(Object.keys(j.lowestBin).map((k) => k.slice(0, k.indexOf("|")))).size;
+    }
+    if (!j.source && j.pages) j.source = "live";
+    return j;
+  }
+
   async function boot() {
-    cat = MP.index(window.__CATALOGUE__ || await (await fetch("data/accessories.json")).json());
+    // The catalogue is the one thing nothing works without. A bad deploy or a dropped
+    // connection here used to reject silently and leave a permanently inert page.
+    try {
+      cat = MP.index(window.__CATALOGUE__ || await (await fetch("data/accessories.json")).json());
+    } catch (e) {
+      fatal("Could not load the accessory catalogue, so there is nothing to rank yet. " +
+            "Reload the page — if it keeps happening the deploy is probably mid-flight.");
+      return;
+    }
 
     const cached = load(LS.prices, null);
     if (cached && cached.lowestBin && Date.now() - cached.generated < PRICE_TTL) prices = cached;
     else prices = window.__PRICES__ || null;
 
-    // Local server sweeps the whole Auction House itself; a static host has neither,
-    // so fall through to the committed snapshot before giving up.
-    if (!prices) prices = await firstOf(["api/prices", "data/prices-snapshot.json"]);
+    // Full Auction House first (the proxy sweeps all 46 pages), then the local server's
+    // own sweep, then the committed snapshot. Any of the three leaves the page usable.
+    if (!prices) prices = await firstOf([...(isLocal() ? ["api/prices"] : []), PROXY + "/prices", "data/prices-snapshot.json"]);
 
     $("contacts").max = String(cat.rules.abiphoneContactsKnown);
     $("contacts").value = state.contacts;
     $("budget").value = load(LS.budget, "100m");
-    wire();
-    stamp();
-    render();
 
-    // Local server already has a full live sweep; only the hosted build needs to reach out.
-    if (!window.__PRICES__ && prices.lowestBin && Object.keys(prices.lowestBin).length) return;
+    try {
+      wire();
+      stamp();
+      render();
+    } catch (e) {
+      fatal("Something went wrong building the page: " + (e && e.message ? e.message : e));
+    }
+  }
+
+  const isLocal = () => /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+
+  /** Last resort: the page cannot function, so say so where the rankings would be. */
+  function fatal(message) {
+    const led = $("led"); if (led) led.className = "led stale";
+    const stampText = $("stampText"); if (stampText) stampText.textContent = "unavailable";
+    for (const id of ["valueList", "maxList", "planList", "earnList", "freeList", "bagList"]) {
+      const node = $(id);
+      if (!node) continue;
+      node.textContent = "";
+      const box = el("div", "callout warn");
+      box.append(el("h3", null, "This page could not start"));
+      box.append(el("p", null, message));
+      node.append(box);
+    }
   }
 
   function stamp() {
-    const n = Object.keys(prices.lowestBin || {}).length;
+    // `variants` counts item x rarity x recombobulated price points, not auctions.
+    // Calling that number "listings" read as if the tool had only seen 350-odd
+    // auctions, when the sweep actually reads several thousand.
+    const variants = Object.keys(prices.lowestBin || {}).length;
+    const priced = prices.accessories || new Set(Object.keys(prices.lowestBin || {}).map((k) => k.slice(0, k.indexOf("|")))).size;
     const age = prices.generated ? Date.now() - prices.generated : Infinity;
     const led = $("led");
     led.className = "led" + (state.liveState === "busy" ? " busy" : age > 6 * 3600e3 ? " stale" : "");
     $("stampText").textContent = state.liveState === "busy"
-      ? "fetching live prices…"
-      : `${n} listings · ${prices.generated ? ago(prices.generated) : "snapshot"}`;
+      ? "sweeping the auction house…"
+      : `${priced} accessories priced · ${prices.generated ? ago(prices.generated) : "snapshot"}`;
+
+    const tradeable = cat ? cat.accessories.filter((a) => a.tradeable).length : 0;
+    const unlisted = tradeable && priced ? tradeable - priced : 0;
+    const scope = prices.listings
+      ? `Swept all ${prices.expectedPages || 46} Auction House pages: ${prices.listings.toLocaleString()} buy-it-now accessory listings, ` +
+        `collapsed to ${variants} lowest prices across ${priced} accessories` +
+        (unlisted > 0 ? `. The other ${unlisted} tradeable accessories have no buy-it-now listing at all right now.` : ".")
+      : `${variants} lowest prices across ${priced} accessories.`;
+
     $("footFresh").textContent = prices.source === "live"
-      ? `Prices fetched live from current Auction House BIN listings, ${ago(prices.generated)}.`
-      : `Prices are a baked snapshot. Hit “Live prices” for current Auction House listings — where the host allows it.`;
+      ? `${scope} Fetched ${ago(prices.generated)}.`
+      : `${scope} This is a baked snapshot — hit “Live prices” for the current Auction House, where the host allows it.`;
   }
 
   /* ---------------- live prices ---------------- */
@@ -297,74 +355,98 @@
    *
    * Hypixel serves profile contents only to a key holder — there is no keyless route
    * (SkyCrypt's public API is behind a WAF, and the community mirrors that do work strip
-   * inventories). The key lives in this browser and is sent only to api.hypixel.net.
+   * inventories). SkyCrypt solves this by holding a key on its own server, and so do we:
+   * the proxy does the lookup, so a visitor types only a username.
+   *
+   * If the proxy is unreachable, or someone would rather not go through it, a personal
+   * key still works — it stays in this browser and is sent only to api.hypixel.net.
    */
   async function loadProfile() {
     const name = $("username").value.trim();
     if (!name) { note("Type a Minecraft username first.", "warn"); $("username").focus(); return; }
     if (!/^[A-Za-z0-9_]{1,16}$/.test(name)) { note(`“${name}” is not a valid Minecraft username.`, "warn"); return; }
 
-    const key = load(LS.key, "");
-    if (!key) {
-      $("keybox").hidden = false;
-      note("Looking up a bag needs a free Hypixel API key — the panel below explains where to get one.", "warn");
-      $("apikey").focus();
-      return;
-    }
-
     $("loadBtn").disabled = true;
+    const key = load(LS.key, "");
     try {
       note(`Looking up ${name}…`);
-      const { uuid: flat, username } = await resolveUuid(name);
+      const bag = key ? await bagViaKey(name, key) : await bagViaProxy(name);
 
-      note(`Fetching ${username}'s SkyBlock profiles…`);
-      const res = await fetch(`https://api.hypixel.net/v2/skyblock/profiles?uuid=${flat}&key=${encodeURIComponent(key)}`);
-      const data = await res.json().catch(() => ({}));
-      if (!data.success) {
-        throw new Error(data.cause === "Invalid API key"
-          ? "Hypixel rejected that API key. Check it under “API key”."
-          : (data.cause || `Hypixel returned HTTP ${res.status}.`));
-      }
-      if (!data.profiles || !data.profiles.length) throw new Error(`${username} has no SkyBlock profiles.`);
-
-      const profile = data.profiles.find((p) => p.selected) || data.profiles[0];
-      const member = profile.members && profile.members[flat];
-      if (!member) throw new Error("That profile holds no data for this player.");
-
-      const blob = (member.inventory && member.inventory.bag_contents && member.inventory.bag_contents.talisman_bag && member.inventory.bag_contents.talisman_bag.data)
-        || (member.talisman_bag && member.talisman_bag.data)
-        || (typeof member.talisman_bag === "string" ? member.talisman_bag : null);
-
-      if (!blob) {
-        throw new Error(`${username}'s accessory bag is hidden. In SkyBlock run /api and switch Inventory API on, then try again.`);
-      }
-
-      const items = await NBT.decodeItems(blob);
       const owned = {};
-      let matched = 0, unknown = 0;
-      for (const it of items) {
-        const extra = it && it.tag && it.tag.ExtraAttributes;
-        if (!extra || !extra.id) continue;
-        if (!cat.byId[extra.id]) { unknown++; continue; }
-        const recomb = !!extra.rarity_upgrades;
+      let matched = 0;
+      for (const a of bag.accessories) {
+        if (!cat.byId[a.id]) continue;
         // Duplicates are common; keep the recombobulated copy, it is the one that counts.
-        if (!owned[extra.id] || (recomb && !owned[extra.id].recomb)) owned[extra.id] = { recomb };
+        if (!owned[a.id] || (a.recomb && !owned[a.id].recomb)) owned[a.id] = { recomb: !!a.recomb };
         matched++;
       }
-
-      if (!matched) throw new Error(`${username}'s accessory bag came back empty. Check Inventory API is on.`);
+      if (!matched) throw new Error(`${bag.username}'s accessory bag came back empty. Check Inventory API is on in SkyBlock (/api → API Settings).`);
 
       state.owned = owned;
       state.bagOrder = [];
       save(LS.owned, state.owned);
       render();
-      note(`Loaded ${matched} accessories from ${username} (${profile.cute_name}).`
-        + (unknown ? ` ${unknown} items were not power-granting accessories.` : ""), "good");
+      const skipped = bag.accessories.length - matched;
+      note(`Loaded ${matched} accessories from ${bag.username}${bag.profile ? ` (${bag.profile})` : ""}.`
+        + (skipped > 0 ? ` ${skipped} items were not power-granting accessories.` : ""), "good");
     } catch (e) {
       note(String((e && e.message) || e), "warn");
     } finally {
       $("loadBtn").disabled = false;
     }
+  }
+
+  /** No key needed: the proxy holds one, the way SkyCrypt does. */
+  async function bagViaProxy(name) {
+    let res;
+    try {
+      // A cold free instance takes a while to wake, so allow for it rather than
+      // failing the first lookup of the day.
+      res = await fetch(`${PROXY}/bag?name=${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(60000) });
+    } catch {
+      throw new Error("Could not reach the lookup service. It may be waking up — try again in a few seconds, "
+        + "or add your own Hypixel key under “API key”.");
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 503) {
+        $("keybox").hidden = false;
+        throw new Error("The lookup service has no Hypixel key configured yet. Add your own under “API key” in the meantime.");
+      }
+      throw new Error(data.error || `Lookup failed (HTTP ${res.status}).`);
+    }
+    return data;
+  }
+
+  /** Fallback path: this browser's own key, sent only to Hypixel. */
+  async function bagViaKey(name, key) {
+    const { uuid: flat, username } = await resolveUuid(name);
+    note(`Fetching ${username}'s SkyBlock profiles…`);
+    const res = await fetch(`https://api.hypixel.net/v2/skyblock/profiles?uuid=${flat}`, { headers: { "API-Key": key } });
+    const data = await res.json().catch(() => ({}));
+    if (!data.success) {
+      throw new Error(data.cause === "Invalid API key"
+        ? "Hypixel rejected that API key. Check it under “API key”."
+        : (data.cause || `Hypixel returned HTTP ${res.status}.`));
+    }
+    if (!data.profiles || !data.profiles.length) throw new Error(`${username} has no SkyBlock profiles.`);
+
+    const profile = data.profiles.find((p) => p.selected) || data.profiles[0];
+    const member = profile.members && profile.members[flat];
+    if (!member) throw new Error("That profile holds no data for this player.");
+
+    const blob = (member.inventory && member.inventory.bag_contents && member.inventory.bag_contents.talisman_bag && member.inventory.bag_contents.talisman_bag.data)
+      || (member.talisman_bag && member.talisman_bag.data)
+      || (typeof member.talisman_bag === "string" ? member.talisman_bag : null);
+    if (!blob) throw new Error(`${username}'s accessory bag is hidden. In SkyBlock run /api and switch Inventory API on, then try again.`);
+
+    const items = await NBT.decodeItems(blob);
+    const accessories = [];
+    for (const it of items) {
+      const extra = it && it.tag && it.tag.ExtraAttributes;
+      if (extra && extra.id) accessories.push({ id: extra.id, recomb: !!extra.rarity_upgrades });
+    }
+    return { username, profile: profile.cute_name, accessories };
   }
 
   /* ---------------- derive ---------------- */
@@ -408,7 +490,7 @@
     const h = el("div", "lhead");
     h.append(el("span", "h-edge"));
     h.append(el("span", "h-idx"));
-    const cols = [["name", "Accessory", "h-name"], ["gain", "Power", ""], ["cost", "Price", ""], ["rate", "Per AP", "h-rate"]];
+    const cols = [["name", "Accessory", "h-name"], ["gain", "Power", "h-power"], ["cost", "Price", ""], ["rate", "Per AP", "h-rate"]];
     for (const [key, label, cls] of cols) {
       const b = el("button", cls);
       b.type = "button";
@@ -453,6 +535,9 @@
     l2.append(el("span", null, ROUTE[o.route] || o.route));
     if (o.fromMp > 0) { l2.append(el("span", "sep", "·")); l2.append(el("span", null, `${o.fromMp} → ${o.toMp} in this line`)); }
     if (o.listings) { l2.append(el("span", "sep", "·")); l2.append(el("span", null, `${o.listings} listed`)); }
+    // Narrow screens drop the Power column so coins-per-AP can stay; keep the number here.
+    l2.append(el("span", "sep m-only", "·"));
+    l2.append(el("span", "m-gain", `+${o.gain} AP`));
     body.append(l2);
     row.append(body);
 
