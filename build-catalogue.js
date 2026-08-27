@@ -132,6 +132,10 @@ function basePower(id, rarity) {
       dungeon: a.dungeon_item !== undefined,
       recombable: a.can_recombobulate !== false && LADDER.indexOf(rarity) >= 0 && LADDER.indexOf(rarity) < LADDER.length - 1,
     };
+    // 39 accessories are gated behind slayer levels, Heart of the Mountain tiers or
+    // trophy-fishing rewards. Recommending one to a player who cannot obtain it is
+    // worse than not recommending it, so the gate travels with the item.
+    if (a.requirements && a.requirements.length) rec.req = a.requirements;
     if (DYNAMIC[a.id]) rec.dynamic = DYNAMIC[a.id];
     return rec;
   });

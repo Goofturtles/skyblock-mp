@@ -80,6 +80,7 @@
   function offers(cat, owned, prices, opts) {
     const contacts = opts?.contacts || 0;
     const includeRecomb = opts?.includeRecomb !== false;
+    const progress = opts?.progress;
     const byId = cat.byId;
     const low = prices?.lowestBin || {};
     const recombCost = prices?.recombobulator?.buy ?? null;
@@ -136,7 +137,10 @@
       }
 
       for (const c of bestByMp.values()) {
+        const gate = requirementStatus(byId[c.id], progress);
         out.push({
+          locked: !gate.met,
+          needs: gate.needs,
           family: key,
           familyName: fam.name,
           id: c.id,
@@ -157,6 +161,29 @@
 
     out.sort((a, b) => a.coinsPerMp - b.coinsPerMp);
     return out;
+  }
+
+  /**
+   * One offer per family, the best value in it.
+   *
+   * offers() emits a row per reachable power level, so a family could suggest both the
+   * Ring and the Artifact above it. As a shopping order that is actively misleading:
+   * you would never buy both, and buying the Ring first is money thrown away if the
+   * Artifact is where you land. Collapse to the best coins-per-power in each family and
+   * flag that the family goes higher.
+   */
+  function bestPerFamily(all) {
+    const best = new Map();
+    const higher = new Map();
+    for (const o of all) {
+      const cur = best.get(o.family);
+      if (!cur || o.coinsPerMp < cur.coinsPerMp) best.set(o.family, o);
+      const top = higher.get(o.family);
+      if (!top || o.toMp > top) higher.set(o.family, o.toMp);
+    }
+    return [...best.values()]
+      .map((o) => ({ ...o, familyTopMp: higher.get(o.family) }))
+      .sort((a, b) => a.coinsPerMp - b.coinsPerMp);
   }
 
   /** Only the highest-power offer for each family (the "get me to max tier" list). */
@@ -218,7 +245,9 @@
         if (mp > current && (!best || mp > best.mp)) best = { id, mp, acc };
       }
       if (best) {
+        const gate = requirementStatus(best.acc, opts?.progress);
         out.push({
+          locked: !gate.met, needs: gate.needs,
           family: key, familyName: fam.name, id: best.id, name: best.acc.name,
           rarity: best.acc.rarity, gain: best.mp - current, toMp: best.mp,
           rift: best.acc.rift, soulbound: best.acc.soulbound, dungeon: best.acc.dungeon,
@@ -229,10 +258,133 @@
     return out;
   }
 
+
+  /* ---------------- requirements ---------------- */
+
+  const TROPHY_RANK = { NONE: 0, BRONZE: 1, SILVER: 2, GOLD: 3, DIAMOND: 4 };
+  const SLAYER_NAME = {
+    zombie: "Revenant", spider: "Tarantula", wolf: "Sven",
+    enderman: "Voidgloom", blaze: "Inferno", vampire: "Riftstalker",
+  };
+
+  /**
+   * Can this player actually obtain the accessory?
+   *
+   * 39 accessories sit behind slayer levels, Heart of the Mountain tiers or
+   * trophy-fishing rewards. `progress` is what the player says they have; anything it
+   * does not mention is treated as not met, so the honest default is that a gated item
+   * is locked until you say otherwise.
+   *
+   * Returns { met, needs: [human-readable strings] }.
+   */
+  function requirementStatus(acc, progress) {
+    if (!acc.req || !acc.req.length) return { met: true, needs: [] };
+    const p = progress || {};
+    const needs = [];
+
+    for (const r of acc.req) {
+      if (r.type === "SLAYER") {
+        const have = (p.slayer && p.slayer[r.slayer_boss_type]) || 0;
+        if (have < r.level) needs.push(`${SLAYER_NAME[r.slayer_boss_type] || r.slayer_boss_type} slayer ${r.level}`);
+      } else if (r.type === "HEART_OF_THE_MOUNTAIN") {
+        if (((p.hotm) || 0) < r.tier) needs.push(`Heart of the Mountain ${r.tier}`);
+      } else if (r.type === "TROPHY_FISHING") {
+        const have = TROPHY_RANK[(p.trophy && p.trophy[r.trophy_type]) || "NONE"] || 0;
+        if (have < (TROPHY_RANK[r.reward] || 0)) {
+          needs.push(`${r.reward.toLowerCase()} ${r.trophy_type.toLowerCase()} trophy fishing`);
+        }
+      } else {
+        // An unknown gate is still a gate — name it rather than quietly allowing it.
+        needs.push(String(r.type).replace(/_/g, " ").toLowerCase());
+      }
+    }
+    return { met: needs.length === 0, needs };
+  }
+
+  /**
+   * What in the bag is doing nothing, and what to put there instead.
+   *
+   * The accessory bag has a finite number of slots, and an accessory that loses to a
+   * higher tier in its own family still occupies one. This finds that dead weight,
+   * then spends the freed slots on the best power available to this player.
+   */
+  function slotPlan(cat, owned, prices, opts) {
+    const contacts = opts?.contacts || 0;
+    const progress = opts?.progress;
+    const byId = cat.byId;
+
+    const dead = [];
+    for (const [key, fam] of Object.entries(cat.families)) {
+      const held = fam.members.filter((id) => owned[id]);
+      if (!held.length) continue;
+
+      let best = null;
+      for (const id of held) {
+        const mp = powerOf(cat, byId[id], !!owned[id].recomb, contacts);
+        if (!best || mp > best.mp) best = { id, mp };
+      }
+      for (const id of held) {
+        if (id === best.id) continue;
+        const mp = powerOf(cat, byId[id], !!owned[id].recomb, contacts);
+        dead.push({
+          id,
+          name: byId[id].name,
+          rarity: byId[id].rarity,
+          mp,
+          familyName: fam.name,
+          reason: "outranked",
+          beatenBy: byId[best.id].name,
+          beatenByMp: best.mp,
+        });
+      }
+      // The Celestial Starstone tops the Crux tree and grants nothing at all, so it can
+      // be the family's only held member and still be pure dead weight.
+      if (best.mp === 0) {
+        dead.push({
+          id: best.id,
+          name: byId[best.id].name,
+          rarity: byId[best.id].rarity,
+          mp: 0,
+          familyName: fam.name,
+          reason: "grants no power",
+          beatenBy: null,
+        });
+      }
+    }
+    dead.sort((a, b) => a.mp - b.mp || a.name.localeCompare(b.name));
+
+    // Fill the freed slots with the best power this player can actually reach.
+    const candidates = offers(cat, owned, prices, opts)
+      .filter((o) => !o.locked)
+      .sort((a, b) => b.gain - a.gain || a.cost - b.cost);
+
+    const takenFamily = new Set();
+    const fills = [];
+    for (const o of candidates) {
+      if (fills.length >= dead.length) break;
+      if (takenFamily.has(o.family)) continue;
+      takenFamily.add(o.family);
+      fills.push(o);
+    }
+
+    return {
+      held: Object.keys(owned).length,
+      dead,
+      freed: dead.length,
+      deadPower: dead.reduce((n, d) => n + d.mp, 0),
+      fills,
+      gain: fills.reduce((n, o) => n + o.gain, 0),
+      spend: fills.reduce((n, o) => n + o.cost, 0),
+    };
+  }
+
   /** Index a raw accessories.json for fast lookup. */
   function index(doc) {
     return { ...doc, byId: Object.fromEntries(doc.accessories.map((a) => [a.id, a])) };
   }
 
-  return { index, powerOf, recombRarity, multiplier, evaluate, offers, maxTierOffers, solveBudget, earnable };
+  return {
+    index, powerOf, recombRarity, multiplier, evaluate, offers, maxTierOffers,
+    solveBudget, earnable, requirementStatus, slotPlan, bestPerFamily, SLAYER_NAME, TROPHY_RANK,
+  };
 });

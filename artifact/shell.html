@@ -31,6 +31,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
       <div class="pricebar-row">
         <span class="stamp"><span class="led" id="led"></span><span id="stampText">loading…</span></span>
         <button id="liveBtn" type="button">Live prices</button>
+        <button id="progBtn" type="button">My progress</button>
         <button id="keyBtn" type="button">Use my own key</button>
       </div>
       <div class="pricebar-row">
@@ -41,6 +42,32 @@ if (!document.querySelector('meta[name="viewport"]')) {
 </header>
 
 <main class="wrap">
+
+  <div class="keybox" id="progbox" hidden>
+    <p>
+      39 accessories are locked behind slayer levels, Heart of the Mountain tiers or trophy
+      fishing. Tell the planner what you have and it stops recommending things you cannot get.
+      Anything left at zero is treated as not unlocked.
+    </p>
+    <div class="progrid">
+      <label class="field"><span class="field-label">Revenant</span><input id="sl-zombie" type="number" min="0" max="9" value="0"></label>
+      <label class="field"><span class="field-label">Tarantula</span><input id="sl-spider" type="number" min="0" max="9" value="0"></label>
+      <label class="field"><span class="field-label">Sven</span><input id="sl-wolf" type="number" min="0" max="9" value="0"></label>
+      <label class="field"><span class="field-label">Voidgloom</span><input id="sl-enderman" type="number" min="0" max="9" value="0"></label>
+      <label class="field"><span class="field-label">Inferno</span><input id="sl-blaze" type="number" min="0" max="9" value="0"></label>
+      <label class="field"><span class="field-label">Riftstalker</span><input id="sl-vampire" type="number" min="0" max="9" value="0"></label>
+      <label class="field"><span class="field-label">HOTM tier</span><input id="hotm" type="number" min="0" max="10" value="0"></label>
+      <label class="field"><span class="field-label">Frog trophy</span>
+        <select id="tr-FROG"><option>NONE</option><option>BRONZE</option><option>SILVER</option><option>GOLD</option><option>DIAMOND</option></select>
+      </label>
+      <label class="field"><span class="field-label">Lava trophy</span>
+        <select id="tr-LAVA"><option>NONE</option><option>BRONZE</option><option>SILVER</option><option>GOLD</option><option>DIAMOND</option></select>
+      </label>
+    </div>
+    <p class="muted-note">
+      <label class="switch"><input id="hideLocked" type="checkbox" checked><span>Hide accessories I cannot get yet</span></label>
+    </p>
+  </div>
 
   <div class="keybox" id="keybox" hidden>
     <p>
@@ -96,6 +123,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
     <button class="tab" role="tab" aria-selected="false" aria-controls="panel-plan" data-tab="plan" tabindex="-1">Budget plan</button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="panel-earn" data-tab="earn" tabindex="-1">Can’t buy <span class="count"></span></button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="panel-free" data-tab="free" tabindex="-1">Free wins</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-slots" data-tab="slots" tabindex="-1">Slots <span class="count"></span></button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="panel-bag" data-tab="bag" tabindex="-1">My bag <span class="count"></span></button>
   </div>
 
@@ -156,6 +184,17 @@ if (!document.querySelector('meta[name="viewport"]')) {
 
     <section id="panel-free" role="tabpanel" aria-label="Free wins" tabindex="0" hidden>
       <div class="stack" id="freeList"></div>
+    </section>
+
+    <section id="panel-slots" role="tabpanel" aria-label="Slots" tabindex="0" hidden>
+      <p class="note">
+        The accessory bag has a fixed number of slots, and an accessory that loses to a higher tier
+        in its own family still takes one up. This is what is doing nothing in your bag, and the best
+        thing to put in its place.
+      </p>
+      <div id="slotSummary" class="plan"></div>
+      <div id="slotDead"></div>
+      <div id="slotFills"></div>
     </section>
 
     <section id="panel-bag" role="tabpanel" aria-label="My bag" hidden>
