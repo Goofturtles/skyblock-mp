@@ -503,8 +503,12 @@
     // only the difference between the new accessory and the one it pushes out; paying
     // Jacobus keeps the whole thing. Whether that is worth it depends entirely on how
     // strong the accessory you would have displaced was.
+    // Only when the player actually stated their slot count. Recommending a real coin
+    // purchase off an inferred capacity — and an unstated jacobusBought that defaults to
+    // 0, so a maxed player would be quoted 1.5M for slots costing 20M — is guessing with
+    // someone else's money.
     let slotBuy = null;
-    if (full) {
+    if (full && !assumed) {
       const next = jacobusNext(opts?.jacobusBought);
       if (next) {
         const take = bestAdditions.filter((o, i, arr) =>

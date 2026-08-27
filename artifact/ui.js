@@ -695,7 +695,7 @@
     const capNow = MP.capacityPlan(cat, state.owned, prices, { ...d.opts, hideLocked: state.hideLocked, assumeFull: !load(LS.roomOk, false) });
     set("value", capNow.full
       ? MP.bestPerFamily(capNow.upgrades).length + capNow.swaps.length
-      : MP.bestPerFamily(d.all).filter((o) => !state.hideLocked || !o.locked).length);
+      : MP.bestPerFamily(state.hideLocked ? d.all.filter((o) => !o.locked) : d.all).length);
     set("max", d.maxTier.filter((o) => !state.hideLocked || !o.locked).length);
     set("earn", d.earn.length);
     set("bag", Object.keys(state.owned).length);
@@ -743,7 +743,11 @@
         "If your bag has spare room, put the real number in Bag slots and this goes back to a plain buy list. ");
       const b = el("button", "linkish", "I have room to spare");
       b.type = "button";
-      b.addEventListener("click", () => { save(LS.roomOk, true); render(); });
+      b.addEventListener("click", () => {
+        save(LS.roomOk, true);
+        render();
+        $("capacity").focus();   // the re-render removes this button from the page
+      });
       p.append(b);
       note.append(p);
       node.append(note);
@@ -751,16 +755,27 @@
 
     // Dead weight is the loudest thing the page can say to someone with a packed bag:
     // free slots they already own. Saying nothing and listing purchases buries it.
-    if (cap.capacity && cap.dead.length) {
+    if (cap.dead.length) {
       const c = el("div", "callout good");
       c.append(el("h3", null,
         `${cap.dead.length} of your ${cap.held} accessories are contributing nothing`));
+      const outranked = cap.dead.filter((x) => x.beatenBy).length;
+      const zero = cap.dead.length - outranked;
+      const why = outranked && zero
+        ? "Some are outranked inside their own families and some grant no power at all"
+        : outranked ? "They are outranked inside their own families"
+        : "They grant no accessory power at all";
       const p = el("p", null,
-        `They are outranked inside their own families, so removing them costs no power and frees `
+        `${why}, so removing them costs no power and frees `
         + `${cap.dead.length} slot${cap.dead.length === 1 ? "" : "s"} you already own. `);
       const b = el("button", "linkish", "See what to take out");
       b.type = "button";
-      b.addEventListener("click", () => selectTab("slots"));
+      b.addEventListener("click", () => {
+        selectTab("slots");
+        // selectTab hides this panel, which blurs the button and drops focus to <body>.
+        const tab = document.querySelector('.tab[data-tab="slots"]');
+        if (tab) tab.focus();
+      });
       p.append(b);
       c.append(p);
       node.append(c);
@@ -807,8 +822,12 @@
     node.append(body);
   }
 
-  function renderPlan({ all, evalNow }) {
-    const buyable = state.hideLocked ? all.filter((o) => !o.locked) : all;
+  function renderPlan(d) {
+    const { all, evalNow } = d;
+    const capNow = MP.capacityPlan(cat, state.owned, prices, { ...d.opts, hideLocked: state.hideLocked, assumeFull: !load(LS.roomOk, false) });
+    // Best value says nothing new fits; a plain shopping list here would contradict it.
+    const pool = capNow.full ? [...capNow.upgrades, ...capNow.swaps] : all;
+    const buyable = state.hideLocked ? pool.filter((o) => !o.locked) : pool;
     const budget = parseCoins($("budget").value);
     const sum = $("planSummary");
     sum.textContent = "";
@@ -942,7 +961,11 @@
       const p = el("p", null, "Slot count assumed from what you hold. ");
       const b = el("button", "linkish", "I have room to spare");
       b.type = "button";
-      b.addEventListener("click", () => { save(LS.roomOk, true); render(); });
+      b.addEventListener("click", () => {
+        save(LS.roomOk, true);
+        render();
+        $("capacity").focus();   // the re-render removes this button from the page
+      });
       p.append(b);
       head.append(p);
     }
@@ -974,22 +997,21 @@
     }
 
     if (cap.upgrades.length) {
-      const upCount = MP.bestPerFamily(cap.upgrades).length;
-      node.append(el("h2", "slot-head", `Upgrades that cost no slot (${upCount})`));
+      const upView = applyView(MP.bestPerFamily(cap.upgrades));
+      node.append(el("h3", "slot-head", `Upgrades that cost no slot (${upView.length})`));
       const sub = el("p", "note", "A higher tier of a family you already hold — the old one comes out as the new one goes in.");
       node.append(sub);
       const t = asTable(el("div", "ledger"));
       header(t, "upgrades");
       // One row per family here too. Listing the Ring and the Artifact above it reads as
       // "buy both" when buying the Ring first is money wasted if the Artifact is the target.
-      const upView = applyView(MP.bestPerFamily(cap.upgrades));
       fill(t, upView.slice(0, CAP), entry, state.search ? "No upgrade matches that search." : "");
       node.append(t);
       truncationNote(node, upView.length);
     }
 
     const swapsView = state.search ? applyView(cap.swaps) : cap.swaps;
-    node.append(el("h2", "slot-head", `Swaps worth making (${swapsView.length})`));
+    node.append(el("h3", "slot-head", `Swaps worth making (${swapsView.length})`));
     node.append(el("p", "note", "Each takes out your weakest accessory to make room. Ranked by coins per point of net gain, after what you give up."));
     const swapTable = asTable(el("div", "ledger"));
     header(swapTable, "swaps");

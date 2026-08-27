@@ -208,6 +208,16 @@ button:disabled { opacity: .55; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3; }
 
+/* Inline text action. Without its own rule this inherited button{}, giving it the same
+   background as the callout it sits in and a 1.25:1 border — so the one way out of a
+   wrong slot assumption read as plain body text. */
+.linkish {
+  background: none; border: none; padding: 0;
+  color: var(--accent); font: inherit; text-decoration: underline;
+  text-underline-offset: 3px; cursor: pointer;
+}
+.linkish:hover:not(:disabled) { background: none; border: none; color: var(--ink); }
+
 /* ---------- ledger ---------- */
 
 /* Rows are separated by whitespace and a hairline, not by giving each one a box.
