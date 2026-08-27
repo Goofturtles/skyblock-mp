@@ -32,6 +32,11 @@ const RATE_WINDOW = 60 * 1000;
 const cache = new Map();          // uuid -> { at, payload }
 const hits = new Map();           // ip -> { at, n }
 
+const PRICE_TTL = 3 * 60 * 1000;  // the Auction House itself only updates every 60s
+const PAGE_CONCURRENCY = 16;
+let priceCache = null;            // { at, payload }
+let priceSweep = null;            // de-dupes concurrent sweeps
+
 /* ---------------- minimal NBT ---------------- */
 
 function readNBT(buf) {
@@ -156,6 +161,88 @@ async function readBag(name) {
   return payload;
 }
 
+/* ---------------- full auction house sweep ---------------- */
+
+/**
+ * Every BIN accessory listing on the Auction House, collapsed to the lowest price
+ * per (item, rarity, recombobulated).
+ *
+ * The browser cannot do this itself — the AH is ~46 pages of roughly 2.5 MB each —
+ * so the sweep happens here and ships as ~20 KB. Pages are decoded and discarded one
+ * at a time; holding all of them would be well over this instance's memory.
+ */
+async function sweepAuctions() {
+  const started = Date.now();
+  const first = await getJSON("https://api.hypixel.net/v2/skyblock/auctions?page=0");
+  if (!first.body || !first.body.success) throw new Error("Hypixel auctions endpoint unavailable.");
+
+  const total = first.body.totalPages;
+  const lowestBin = Object.create(null);
+  let scanned = 0, undecodable = 0, pagesRead = 0;
+
+  const absorb = (page) => {
+    if (!page || !page.auctions) return;
+    pagesRead++;
+    for (const a of page.auctions) {
+      if (!a.bin || a.category !== "accessories") continue;
+      scanned++;
+      try {
+        const nbt = readNBT(zlib.gunzipSync(Buffer.from(a.item_bytes, "base64")));
+        const extra = nbt.i && nbt.i[0] && nbt.i[0].tag && nbt.i[0].tag.ExtraAttributes;
+        if (!extra || !extra.id) { undecodable++; continue; }
+        const key = `${extra.id}|${a.tier}|${extra.rarity_upgrades ? 1 : 0}`;
+        const cur = lowestBin[key];
+        if (!cur) lowestBin[key] = { price: a.starting_bid, count: 1 };
+        else { cur.count++; if (a.starting_bid < cur.price) cur.price = a.starting_bid; }
+      } catch { undecodable++; }
+    }
+  };
+
+  absorb(first.body);
+  first.body = null; // let the first page go before pulling the rest
+
+  for (let start = 1; start < total; start += PAGE_CONCURRENCY) {
+    const batch = [];
+    for (let p = start; p < Math.min(start + PAGE_CONCURRENCY, total); p++) {
+      batch.push(getJSON(`https://api.hypixel.net/v2/skyblock/auctions?page=${p}`)
+        .then((r) => { absorb(r.body); r.body = null; })
+        .catch(() => {}));
+    }
+    await Promise.all(batch);
+  }
+
+  let recombobulator = null;
+  try {
+    const bz = await getJSON("https://api.hypixel.net/v2/skyblock/bazaar");
+    const p = bz.body && bz.body.products && bz.body.products.RECOMBOBULATOR_3000;
+    if (p) recombobulator = { buy: p.quick_status.buyPrice, sell: p.quick_status.sellPrice };
+  } catch { /* bazaar is a bonus, not a requirement */ }
+
+  const accessories = new Set(Object.keys(lowestBin).map((k) => k.slice(0, k.indexOf("|"))));
+  return {
+    source: "live",
+    generated: Date.now(),
+    pages: pagesRead,
+    expectedPages: total,
+    listings: scanned,        // BIN accessory auctions actually read
+    undecodable,
+    variants: Object.keys(lowestBin).length,  // item x rarity x recombobulated
+    accessories: accessories.size,
+    sweepMs: Date.now() - started,
+    recombobulator,
+    lowestBin,
+  };
+}
+
+function prices() {
+  if (priceCache && Date.now() - priceCache.at < PRICE_TTL) return Promise.resolve(priceCache.payload);
+  if (priceSweep) return priceSweep;
+  priceSweep = sweepAuctions()
+    .then((payload) => { priceCache = { at: Date.now(), payload }; return payload; })
+    .finally(() => { priceSweep = null; });
+  return priceSweep;
+}
+
 /* ---------------- server ---------------- */
 
 http.createServer(async (req, res) => {
@@ -172,7 +259,27 @@ http.createServer(async (req, res) => {
 
   if (url.pathname === "/health") {
     res.writeHead(200, headers);
-    res.end(JSON.stringify({ ok: true, keyConfigured: KEY.length > 0, cached: cache.size }));
+    res.end(JSON.stringify({
+      ok: true,
+      keyConfigured: KEY.length > 0,
+      cachedBags: cache.size,
+      pricesAge: priceCache ? Date.now() - priceCache.at : null,
+    }));
+    return;
+  }
+
+  // Full Auction House prices. No key needed — Hypixel's auction endpoint is public;
+  // it is here rather than in the browser purely because it is ~46 pages of ~2.5 MB.
+  if (url.pathname === "/prices") {
+    try {
+      const payload = await prices();
+      res.writeHead(200, { ...headers, "cache-control": "public, max-age=60" });
+      res.end(JSON.stringify(payload));
+    } catch (e) {
+      res.writeHead(502, headers);
+      res.end(JSON.stringify({ error: String(e.message || e) }));
+      console.warn("price sweep failed:", e.message);
+    }
     return;
   }
 
