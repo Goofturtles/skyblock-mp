@@ -16,7 +16,10 @@ const http = require("http");
 const zlib = require("zlib");
 
 const PORT = process.env.PORT || 3513;
-const KEY = process.env.HYPIXEL_KEY || "";
+// Trimmed: pasting a key into a dashboard field very often carries a trailing
+// newline or space, and Hypixel rejects the whole string as invalid.
+const KEY = (process.env.HYPIXEL_KEY || "").trim();
+const KEY_RAW = process.env.HYPIXEL_KEY || "";
 
 // Browser callers must come from one of these origins — enforced for /bag below, not
 // merely advertised in a CORS header, which stops nothing outside a browser.
@@ -368,6 +371,13 @@ async function handle(req, res) {
     res.end(JSON.stringify({
       ok: true,
       keyConfigured: KEY.length > 0,
+      // Shape only — never any characters of the key itself. Enough to tell a
+      // whitespace-padded paste or a truncated copy from a genuinely wrong key.
+      keyShape: {
+        length: KEY.length,
+        looksLikeUuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(KEY),
+        hadSurroundingWhitespace: KEY_RAW !== KEY,
+      },
       cachedBags: cache.size,
       pricesAge: priceCache ? Date.now() - priceCache.at : null,
     }));
