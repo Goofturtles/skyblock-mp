@@ -38,6 +38,7 @@ const cache = new Map();          // uuid -> { at, payload }
 const hits = new Map();           // ip -> { at, n }
 
 const PRICE_TTL = 3 * 60 * 1000;  // the Auction House itself only updates every 60s
+const SWEEP_COOLDOWN = 60 * 1000; // after a failed sweep, before another 46-page attempt
 const PAGE_CONCURRENCY = 5;       // 16 x ~2.5MB parsed at once is near a 512MB instance's ceiling
 let priceCache = null;            // { at, payload }
 let priceSweep = null;            // de-dupes concurrent sweeps
@@ -130,7 +131,17 @@ async function resolveUuid(name) {
  * caller. Keying on the leftmost instead would let anyone forge a fresh identity per
  * request, bypassing the rate limit and growing the map without bound.
  */
-const TRUSTED_HOPS = Number(process.env.TRUSTED_PROXY_HOPS ?? (process.env.RENDER ? 1 : 0));
+const TRUSTED_HOPS = (() => {
+  const raw = process.env.TRUSTED_PROXY_HOPS;
+  if (raw != null && raw !== "") {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n >= 0) return n;
+    console.warn(`TRUSTED_PROXY_HOPS="${raw}" is not a non-negative integer; ignoring it.`);
+  }
+  // Render puts one router in front. If this service ever sits behind another proxy too,
+  // measure with /whoami and pin TRUSTED_PROXY_HOPS rather than guessing.
+  return process.env.RENDER ? 1 : 0;
+})();
 
 function clientIp(req) {
   if (TRUSTED_HOPS > 0) {
@@ -159,13 +170,18 @@ async function readBag(name) {
   const cached = cache.get(uuid);
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.payload;
 
-  const { body } = await getJSON(`https://api.hypixel.net/v2/skyblock/profiles?uuid=${uuid}`, {
+  const { ok, status, body } = await getJSON(`https://api.hypixel.net/v2/skyblock/profiles?uuid=${uuid}`, {
     headers: { "API-Key": KEY, "user-agent": "skyblock-mp-proxy/1.0" },
   });
 
   if (!body || body.success !== true) {
-    const e = new Error(body?.cause || "Hypixel rejected the request.");
-    e.code = /key/i.test(body?.cause || "") ? 502 : 400;
+    // Hypixel being down, throttling us, or returning an unparseable body is our problem,
+    // not the caller's — only a genuine rejection of the request is a 4xx.
+    const upstreamFault = !ok && (status >= 500 || status === 429) || !body;
+    const e = new Error(body?.cause || (upstreamFault
+      ? "Hypixel is not answering right now. Try again in a moment."
+      : "Hypixel rejected the request."));
+    e.code = upstreamFault || /key/i.test(body?.cause || "") ? 502 : 400;
     throw e;
   }
   if (!body.profiles || !body.profiles.length) {
@@ -201,7 +217,12 @@ async function readBag(name) {
     count: seen.size,
     fetched: Date.now(),
   };
-  if (cache.size >= MAX_CACHED_BAGS) cache.clear();
+  if (cache.size >= MAX_CACHED_BAGS) {
+    // Drop what has already expired before resorting to throwing everything away.
+    const now = Date.now();
+    for (const [k, v] of cache) if (now - v.at > CACHE_MS) cache.delete(k);
+    if (cache.size >= MAX_CACHED_BAGS) cache.clear();
+  }
   cache.set(uuid, { at: Date.now(), payload });
   return payload;
 }
@@ -285,11 +306,20 @@ async function sweepAuctions() {
   };
 }
 
+let sweepBlockedUntil = 0;
+
 function prices() {
   if (priceCache && Date.now() - priceCache.at < PRICE_TTL) return Promise.resolve(priceCache.payload);
   if (priceSweep) return priceSweep;
+  // A failing sweep costs 46 upstream requests. Without this, an outage turns every
+  // client retry into another full attempt.
+  if (Date.now() < sweepBlockedUntil) {
+    if (priceCache) return Promise.resolve(priceCache.payload);
+    return Promise.reject(new Error("Auction House sweep failed recently; retrying shortly."));
+  }
   priceSweep = sweepAuctions()
     .then((payload) => { priceCache = { at: Date.now(), payload }; return payload; })
+    .catch((e) => { sweepBlockedUntil = Date.now() + SWEEP_COOLDOWN; throw e; })
     .finally(() => { priceSweep = null; });
   return priceSweep;
 }
@@ -315,10 +345,10 @@ process.on("unhandledRejection", (e) => console.error("unhandledRejection:", e))
 async function handle(req, res) {
   const origin = req.headers.origin;
   const headers = { "content-type": "application/json; charset=utf-8" };
-  if (origin && ALLOWED.has(origin)) {
-    headers["access-control-allow-origin"] = origin;
-    headers["vary"] = "Origin";
-  }
+  // Vary is unconditional: the response differs by Origin whether or not this one was
+  // allowed, and /prices is cacheable, so a shared cache must key on it either way.
+  headers["vary"] = "Origin";
+  if (origin && ALLOWED.has(origin)) headers["access-control-allow-origin"] = origin;
 
   if (req.method === "OPTIONS") { res.writeHead(204, headers); res.end(); return; }
 
@@ -331,6 +361,19 @@ async function handle(req, res) {
       keyConfigured: KEY.length > 0,
       cachedBags: cache.size,
       pricesAge: priceCache ? Date.now() - priceCache.at : null,
+    }));
+    return;
+  }
+
+  // Reports what this service sees of the caller, so the trusted-hop count can be measured
+  // instead of assumed. Reveals only the caller's own address chain, which they already know.
+  if (url.pathname === "/whoami") {
+    res.writeHead(200, headers);
+    res.end(JSON.stringify({
+      xForwardedFor: req.headers["x-forwarded-for"] || null,
+      socketRemoteAddress: req.socket.remoteAddress || null,
+      trustedHops: TRUSTED_HOPS,
+      rateLimitKey: clientIp(req),
     }));
     return;
   }
