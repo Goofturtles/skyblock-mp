@@ -518,7 +518,6 @@
 
   function header(target) {
     const h = el("div", "lhead");
-    h.append(el("span", "h-edge"));
     h.append(el("span", "h-idx"));
     const cols = [["name", "Accessory", "h-name"], ["gain", "Power", "h-power"], ["cost", "Price", ""], ["rate", "Per AP", "h-rate"]];
     for (const [key, label, cls] of cols) {
@@ -545,19 +544,26 @@
     target.append(h);
   }
 
+  /**
+   * Name + rarity, coloured the way the game colours item names. The rarity word
+   * stays as a dim label so the tier is still readable to anyone who does not have
+   * the colour scale memorised (and to screen readers, which get no colour at all).
+   */
+  function nameAndRarity(line1, name, rarity, opts) {
+    const n = el("span", "iname", name);
+    n.style.color = rarityVar(rarity);
+    line1.append(n);
+    line1.append(el("span", "rarity", String(rarity).replace("_", " ")));
+    if (opts && opts.recomb) line1.append(el("span", "chip recomb", "recombobulated"));
+    return line1;
+  }
+
   function entry(o, i) {
     const row = el("div", "entry");
-    const edge = el("div", "edge");
-    edge.style.background = rarityVar(o.rarity);
-    row.append(edge, el("div", "idx", i == null ? "" : String(i + 1)));
+    row.append(el("div", "idx", i == null ? "" : String(i + 1)));
 
     const body = el("div", "body");
-    const l1 = el("div", "line1");
-    l1.append(el("span", "iname", o.name));
-    const rar = el("span", "rarity", String(o.rarity).replace("_", " "));
-    rar.style.color = rarityVar(o.rarity);
-    l1.append(rar);
-    if (o.recomb) l1.append(el("span", "chip recomb", "recombobulated"));
+    const l1 = nameAndRarity(el("div", "line1"), o.name, o.rarity, { recomb: o.recomb });
     if (o.familyName && o.familyName !== o.name) l1.append(el("span", "line-of", o.familyName + " line"));
     body.append(l1);
 
@@ -573,7 +579,9 @@
 
     row.append(el("div", "num c-power", "+" + o.gain));
     row.append(el("div", "num c-price", coins(o.cost)));
-    row.append(el("div", "num c-rate", coins(o.coinsPerMp)));
+    const rate = el("div", "num c-rate", coins(o.coinsPerMp));
+    rate.append(el("span", "unit", "/AP"));
+    row.append(rate);
     return row;
   }
 
@@ -699,15 +707,9 @@
   function renderEarn({ earn }) {
     fill($("earnList"), earn, (e, i) => {
       const row = el("div", "entry");
-      const edge = el("div", "edge");
-      edge.style.background = rarityVar(e.rarity);
-      row.append(edge, el("div", "idx", String(i + 1)));
+      row.append(el("div", "idx", String(i + 1)));
       const body = el("div", "body");
-      const l1 = el("div", "line1");
-      l1.append(el("span", "iname", e.name));
-      const rar = el("span", "rarity", String(e.rarity).replace("_", " "));
-      rar.style.color = rarityVar(e.rarity);
-      l1.append(rar);
+      const l1 = nameAndRarity(el("div", "line1"), e.name, e.rarity);
       if (e.rift) l1.append(el("span", "chip rift", "rift"));
       if (e.soulbound) l1.append(el("span", "chip soul", "soulbound " + String(e.soulbound).toLowerCase()));
       if (e.dungeon) l1.append(el("span", "chip dungeon", "dungeon"));
@@ -792,9 +794,6 @@
     fill($("bagList"), list.slice(0, BAG_CAP), (a) => {
       const has = state.owned[a.id];
       const row = el("div", "entry pick" + (has ? " own" : ""));
-      const edge = el("div", "edge");
-      edge.style.background = rarityVar(a.rarity);
-      row.append(edge);
 
       // Wrapped in a label so the tap target is 30px, not the checkbox's 17px — this is
       // the primary interaction and most of it happens on a phone.
@@ -814,11 +813,7 @@
       row.append(hit);
 
       const body = el("div", "body");
-      const l1 = el("div", "line1");
-      l1.append(el("span", "iname", a.name));
-      const rar = el("span", "rarity", String(a.rarity).replace("_", " "));
-      rar.style.color = rarityVar(a.rarity);
-      l1.append(rar);
+      const l1 = nameAndRarity(el("div", "line1"), a.name, a.rarity);
       if (a.rift) l1.append(el("span", "chip rift", "rift"));
       if (a.soulbound) l1.append(el("span", "chip soul", "soulbound"));
       body.append(l1);

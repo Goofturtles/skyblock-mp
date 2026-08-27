@@ -43,7 +43,7 @@
   --radius: 12px;
 
   /* One grid drives the header row and every ledger row, so columns stay aligned. */
-  --cols: 3px 30px minmax(0, 1fr) 84px 96px 88px;
+  --cols: 30px minmax(0, 1fr) 92px 108px 112px;
 }
 
 * { box-sizing: border-box; }
@@ -118,18 +118,18 @@ h1 {
 /* ---------- summary ---------- */
 
 .strip {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 1px;
-  background: var(--rule-soft); border: 1px solid var(--rule);
-  border-radius: var(--radius) var(--radius) 0 0; overflow: hidden; margin-top: 20px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 20px 36px; margin-top: 22px; padding: 0 2px;
 }
 
-.cell { background: var(--surface); padding: 14px 16px; }
+.cell { padding: 0; }
 .cell-label { color: var(--ink-3); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; line-height: 1.6; }
-.cell-value { font-family: var(--mono); font-size: 25px; font-weight: 600; line-height: 1.35; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 2px; }
+/* Display face rather than mono: at 30px the slashed mono zero read as a glitch. */
+.cell-value { font-family: var(--display); font-size: 30px; font-weight: 650; line-height: 1.28; letter-spacing: -.025em; font-variant-numeric: tabular-nums; margin-top: 3px; }
 .cell-value.accent { color: var(--accent); }
 .cell-sub { color: var(--ink-3); font-size: 12px; line-height: 1.5; margin-top: 2px; }
 
-.meter { height: 5px; background: var(--ground-2); border: 1px solid var(--rule); border-top: none; border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
+.meter { height: 4px; background: var(--ground-2); border-radius: 99px; overflow: hidden; margin-top: 18px; }
 .meter-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent-deep), var(--accent)); transition: width .5s cubic-bezier(.2,.6,.3,1); }
 
 /* ---------- tabs ---------- */
@@ -186,11 +186,13 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
 /* ---------- ledger ---------- */
 
-.ledger { display: flex; flex-direction: column; gap: 5px; }
+/* Rows are separated by whitespace and a hairline, not by giving each one a box.
+   A hundred bordered cards stacked up read as noise; this reads as a table. */
+.ledger { display: flex; flex-direction: column; }
 
 .lhead {
-  display: grid; grid-template-columns: var(--cols); gap: 0 12px; align-items: center;
-  padding: 0 16px 7px; border-bottom: 1px solid var(--rule); margin-bottom: 6px;
+  display: grid; grid-template-columns: var(--cols); gap: 0 16px; align-items: center;
+  padding: 0 12px 9px; border-bottom: 1px solid var(--rule); margin-bottom: 2px;
 }
 
 .lhead span, .lhead button {
@@ -207,19 +209,24 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 .lhead .arrow { font-size: 9px; margin-left: 3px; }
 
 .entry {
-  display: grid; grid-template-columns: var(--cols); gap: 0 12px; align-items: center;
-  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
-  overflow: hidden; padding-right: 16px;
+  display: grid; grid-template-columns: var(--cols); gap: 0 16px; align-items: center;
+  padding: 0 12px; border-radius: 8px;
+  border-bottom: 1px solid var(--rule-soft);
+  transition: background .12s;
 }
 
-.entry:hover { border-color: #35415f; }
-.edge { align-self: stretch; background: var(--r-common); }
-.idx { font-family: var(--mono); font-size: 12px; color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; line-height: 1.5; padding: 12px 0; }
+.entry:hover { background: var(--surface); border-bottom-color: transparent; }
+.entry:last-child { border-bottom: none; }
 
-.body { min-width: 0; padding: 10px 0; }
-.line1 { display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; line-height: 1.4; }
-.iname { font-weight: 600; font-size: 14.5px; line-height: 1.45; letter-spacing: -.005em; }
-.rarity { font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; line-height: 1.6; }
+.idx { font-family: var(--mono); font-size: 12px; color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; line-height: 1.5; padding: 13px 0; }
+
+.body { min-width: 0; padding: 11px 0; }
+.line1 { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; line-height: 1.4; }
+
+/* SkyBlock colours item names by rarity, so the name carries it here too. That is
+   how players already read an item, and it retires both the stripe and the pill. */
+.iname { font-weight: 600; font-size: 15px; line-height: 1.45; letter-spacing: -.005em; }
+.rarity { color: var(--ink-3); font-size: 10.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; line-height: 1.6; }
 .line-of { color: var(--ink-3); font-size: 12px; line-height: 1.5; }
 .line2 { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--ink-2); font-size: 12.5px; line-height: 1.55; margin-top: 1px; }
 .sep { color: var(--ink-3); }
@@ -230,17 +237,20 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 .chip.soul { color: var(--alert); border-color: #5c3f28; }
 .chip.dungeon { color: var(--r-legendary); border-color: #5c4526; }
 
-.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; padding: 10px 0; }
-.c-power { color: var(--gain); font-size: 13.5px; font-weight: 600; line-height: 1.5; }
-.c-price { color: var(--coin); font-size: 14.5px; font-weight: 600; line-height: 1.5; }
-.c-rate { color: var(--ink-2); font-size: 13px; line-height: 1.5; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; padding: 11px 0; }
+.c-power { color: var(--gain); font-size: 13.5px; font-weight: 500; line-height: 1.5; }
+.c-price { color: var(--coin); font-size: 14.5px; font-weight: 500; line-height: 1.5; }
+/* This is the column the list is ranked by, so it is the one that carries weight. */
+.c-rate { color: var(--ink); font-size: 14.5px; font-weight: 600; line-height: 1.5; }
+.c-rate .unit { color: var(--ink-3); font-size: 11px; font-weight: 400; margin-left: 2px; }
 .m-gain, .sep.m-only { display: none; }
 .line2 .m-gain { color: var(--gain); font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* ---------- bag rows ---------- */
 
-.entry.pick { grid-template-columns: 3px auto minmax(0, 1fr) auto; padding-right: 14px; }
-.entry.own { border-color: #2f5c46; background: #142118; }
+.entry.pick { grid-template-columns: auto minmax(0, 1fr) auto; }
+.entry.own { background: #121e17; border-bottom-color: #24402e; }
+.entry.own:hover { background: #16261c; }
 .own-hit { display: grid; place-items: center; min-width: 30px; min-height: 30px; cursor: pointer; }
 .own-box { width: 18px; height: 18px; accent-color: var(--gain); cursor: pointer; }
 .recomb-tick { min-height: 30px; }
@@ -260,13 +270,15 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
 /* ---------- first run ---------- */
 
+/* This used to be a full-width slab that pushed every ranking below the fold on a
+   laptop. It is guidance, not the product. */
 .onboard {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px 22px;
   background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius);
-  padding: 18px 20px; margin-bottom: 16px;
+  padding: 14px 18px; margin-bottom: 16px;
 }
 
-.onboard h2 { margin: 0 0 4px; font-size: 16px; font-weight: 600; line-height: 1.4; grid-column: 1 / -1; }
+.onboard h2 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.4; grid-column: 1 / -1; color: var(--ink-2); }
 .step { display: flex; gap: 11px; align-items: flex-start; }
 .step-n {
   flex: none; width: 22px; height: 22px; border-radius: 50%;
@@ -274,13 +286,13 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
   font-family: var(--mono); font-size: 11.5px; font-weight: 600;
   display: grid; place-items: center; line-height: 1.6; margin-top: 1px;
 }
-.step p { margin: 0; color: var(--ink-2); font-size: 13px; line-height: 1.55; }
+.step p { margin: 0; color: var(--ink-3); font-size: 12.5px; line-height: 1.5; }
 .step b { color: var(--ink); font-weight: 600; }
-.onboard-actions { grid-column: 1 / -1; display: flex; gap: 9px; flex-wrap: wrap; margin-top: 2px; }
+.onboard-actions { grid-column: 1 / -1; display: flex; gap: 9px; flex-wrap: wrap; margin-top: 4px; }
 
 /* ---------- plan ---------- */
 
-.plan { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 1px; background: var(--rule-soft); border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; margin-bottom: 14px; }
+.plan { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 18px 32px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); margin-bottom: 18px; }
 
 /* ---------- misc ---------- */
 
@@ -296,11 +308,12 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 @media (max-width: 760px) {
   /* Coins-per-AP is the number the whole list is ranked by, so it is the last thing
      that may go. Power moves inline into line2 instead and frees the column. */
-  :root { --cols: 3px minmax(0, 1fr) 74px 78px; }
+  :root { --cols: minmax(0, 1fr) 78px 84px; }
   .lhead .h-idx, .lhead .h-power { display: none; }
   .entry .idx, .entry .c-power { display: none; }
   .m-gain, .sep.m-only { display: inline; }
-  .entry.pick { grid-template-columns: 3px auto minmax(0, 1fr) auto; }
+  .entry.pick { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .entry, .lhead { gap: 0 10px; padding-left: 4px; padding-right: 4px; }
   .cell-value { font-size: 21px; }
   /* The recombobulated toggle stays reachable — it is worth up to 12 AP per item —
      but a bare checkbox reads as nothing on touch, so keep a short label. */
