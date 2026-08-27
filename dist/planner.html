@@ -1071,6 +1071,50 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
   /* ---------------- username lookup ---------------- */
 
   /**
+   * Username -> { uuid (dashless), username }.
+   *
+   * Three resolvers because one is not enough: ashcon returned 404 for a real account
+   * ("goofturtle") that both playerdb and minetools resolve, so a single source will
+   * tell some players they do not exist. Mojang's own API sends no CORS header, so a
+   * browser cannot use it. Tries each in turn; only reports "not found" when a resolver
+   * actually said so, never when they were all merely unreachable.
+   */
+  async function resolveUuid(name) {
+    const sources = [
+      {
+        url: `https://playerdb.co/api/player/minecraft/${encodeURIComponent(name)}`,
+        parse: (j) => j && j.data && j.data.player && j.data.player.raw_id
+          ? { uuid: j.data.player.raw_id, username: j.data.player.username } : null,
+      },
+      {
+        url: `https://api.minetools.eu/uuid/${encodeURIComponent(name)}`,
+        parse: (j) => j && j.status === "OK" && j.id ? { uuid: j.id, username: j.name || name } : null,
+      },
+      {
+        url: `https://api.ashcon.app/mojang/v2/user/${encodeURIComponent(name)}`,
+        parse: (j) => j && j.uuid ? { uuid: String(j.uuid).replace(/-/g, ""), username: j.username || name } : null,
+      },
+    ];
+
+    let sawDefiniteMiss = false;
+    for (const src of sources) {
+      try {
+        const r = await fetch(src.url, { signal: AbortSignal.timeout(8000) });
+        const j = await r.json().catch(() => null);
+        const hit = j && src.parse(j);
+        if (hit && hit.uuid) return hit;
+        // A parsed response that simply has no player is a real answer, not an outage.
+        if (j) sawDefiniteMiss = true;
+      } catch { /* try the next resolver */ }
+    }
+
+    throw new Error(sawDefiniteMiss
+      ? `No Minecraft account called “${name}”. Check the spelling — it is your in-game name, not your Discord or GitHub name.`
+      : "Could not reach any username lookup service. Check your connection and try again.");
+  }
+
+
+  /**
    * Reads a player's accessory bag and ticks everything in it.
    *
    * Hypixel serves profile contents only to a key holder — there is no keyless route
@@ -1093,10 +1137,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     $("loadBtn").disabled = true;
     try {
       note(`Looking up ${name}…`);
-      const mj = await fetch(`https://api.ashcon.app/mojang/v2/user/${encodeURIComponent(name)}`);
-      if (!mj.ok) throw new Error(`No Minecraft account called “${name}”.`);
-      const { uuid, username } = await mj.json();
-      const flat = uuid.replace(/-/g, "");
+      const { uuid: flat, username } = await resolveUuid(name);
 
       note(`Fetching ${username}'s SkyBlock profiles…`);
       const res = await fetch(`https://api.hypixel.net/v2/skyblock/profiles?uuid=${flat}&key=${encodeURIComponent(key)}`);
