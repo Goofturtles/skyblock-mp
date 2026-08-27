@@ -124,12 +124,15 @@ async function resolveUuid(name) {
 /**
  * Every entry in X-Forwarded-For is client-supplied except the ones appended by proxies
  * we actually sit behind, so the header is only worth reading when we know how many
- * those are. Render puts exactly one load balancer in front and sets RENDER=true;
- * running bare (locally) there is none, and the header is pure attacker input.
+ * those are. Running bare (locally) there are none, and the header is pure attacker input.
  *
- * With one trusted hop the rightmost entry is the address that hop observed — the real
- * caller. Keying on the leftmost instead would let anyone forge a fresh identity per
- * request, bypassing the rate limit and growing the map without bound.
+ * Measured against the live service with /whoami: *.onrender.com sits behind Cloudflare
+ * plus two Render layers, so three entries are appended and the real caller is the third
+ * from the right — confirmed stable with zero, one and three forged entries prepended.
+ * A guessed value of 1 pointed at Render's internal 10.x address, which is identical for
+ * every visitor: the rate limit was one global bucket and real users would have collided.
+ * TRUSTED_PROXY_HOPS is pinned to 3 in the service environment; measure again with
+ * /whoami before trusting this anywhere else.
  */
 const TRUSTED_HOPS = (() => {
   const raw = process.env.TRUSTED_PROXY_HOPS;
