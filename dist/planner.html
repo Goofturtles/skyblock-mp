@@ -226,7 +226,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
 .lhead .h-name { text-align: left; }
 .lhead button:hover { color: var(--ink); }
-.lhead button[aria-pressed="true"] { color: var(--accent); }
+.lhead button[aria-sort]:not([aria-sort="none"]) { color: var(--accent); }
 .lhead .arrow { font-size: 9px; margin-left: 3px; }
 
 .entry {
@@ -262,7 +262,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 .c-power { color: var(--gain); font-size: 13.5px; font-weight: 500; line-height: 1.5; }
 .c-price { color: var(--coin); font-size: 14.5px; font-weight: 500; line-height: 1.5; }
 /* This is the column the list is ranked by, so it is the one that carries weight. */
-.c-rate { color: var(--ink); font-size: 14.5px; font-weight: 600; line-height: 1.5; }
+.c-rate { color: var(--ink); font-size: 14.5px; font-weight: 600; line-height: 1.5; white-space: nowrap; }
 .c-rate .unit { color: var(--ink-3); font-size: 11px; font-weight: 400; margin-left: 2px; }
 .m-gain, .sep.m-only { display: none; }
 .line2 .m-gain { color: var(--gain); font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -484,7 +484,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
       <div class="ledger" id="earnList"></div>
     </section>
 
-    <section id="panel-free" role="tabpanel" aria-label="Free wins" hidden>
+    <section id="panel-free" role="tabpanel" aria-label="Free wins" tabindex="0" hidden>
       <div class="stack" id="freeList"></div>
     </section>
 
@@ -1364,22 +1364,31 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
   /* ---------------- rows ---------------- */
 
-  function header(target) {
+  function header(target, scope) {
     const h = el("div", "lhead");
-    h.append(el("span", "h-idx"));
+    h.setAttribute("role", "row");
+    const idx = el("span", "h-idx");
+    idx.setAttribute("role", "columnheader");
+    h.append(idx);
     const cols = [["name", "Accessory", "h-name"], ["gain", "Power", "h-power"], ["cost", "Price", ""], ["rate", "Per AP", "h-rate"]];
     for (const [key, label, cls] of cols) {
       const b = el("button", cls);
       b.type = "button";
-      b.dataset.focusKey = "sort:" + key;   // header is rebuilt on every render
+      b.setAttribute("role", "columnheader");
+      // Both the Best value and Max tier panels build a header, so the key has to name
+      // its panel. Sharing one key sent focus to whichever button the query found first,
+      // which is the hidden panel's — so sorting silently dropped focus to <body>.
+      b.dataset.focusKey = `sort:${scope}:${key}`;
       b.append(document.createTextNode(label));
       const active = state.sort === key;
       // `gain` sorts high-to-low at dir 1, the others low-to-high; the glyph has to follow
       // the data, not the flag.
       const descending = active && ((key === "gain") === (state.sortDir > 0));
-      b.setAttribute("aria-pressed", String(active));
+      b.setAttribute("aria-sort", active ? (descending ? "descending" : "ascending") : "none");
       if (active) {
-        b.append(el("span", "arrow", descending ? "▼" : "▲"));
+        const arrow = el("span", "arrow", descending ? "▼" : "▲");
+        arrow.setAttribute("aria-hidden", "true");   // the .sr span below says it in words
+        b.append(arrow);
         b.append(el("span", "sr", descending ? ", sorted descending" : ", sorted ascending"));
       }
       b.addEventListener("click", () => {
@@ -1397,17 +1406,28 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
    * stays as a dim label so the tier is still readable to anyone who does not have
    * the colour scale memorised (and to screen readers, which get no colour at all).
    */
+  /** A numeric cell that tells a screen reader which column it is in. */
+  function cell(cls, text, label) {
+    const c = el("div", cls, text);
+    c.setAttribute("role", "cell");
+    if (label) c.setAttribute("aria-label", `${label}: ${text}`);
+    return c;
+  }
+
   function nameAndRarity(line1, name, rarity, opts) {
     const n = el("span", "iname", name);
     n.style.color = rarityVar(rarity);
     line1.append(n);
-    line1.append(el("span", "rarity", String(rarity).replace("_", " ")));
+    // Lowercase in the DOM and uppercased visually by CSS: screen readers spell out
+    // all-caps words letter by letter.
+    line1.append(el("span", "rarity", String(rarity).replace("_", " ").toLowerCase()));
     if (opts && opts.recomb) line1.append(el("span", "chip recomb", "recombobulated"));
     return line1;
   }
 
   function entry(o, i) {
     const row = el("div", "entry");
+    row.setAttribute("role", "row");
     row.append(el("div", "idx", i == null ? "" : String(i + 1)));
 
     const body = el("div", "body");
@@ -1425,16 +1445,24 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     body.append(l2);
     row.append(body);
 
-    row.append(el("div", "num c-power", "+" + o.gain));
-    row.append(el("div", "num c-price", coins(o.cost)));
-    const rate = el("div", "num c-rate", coins(o.coinsPerMp));
+    row.append(cell("num c-power", "+" + o.gain, "power gained"));
+    row.append(cell("num c-price", coins(o.cost), "price"));
+    const rate = cell("num c-rate", coins(o.coinsPerMp), "coins per power");
     rate.append(el("span", "unit", "/AP"));
     row.append(rate);
     return row;
   }
 
+  /** Rows are divs, so the table structure has to be declared for assistive tech. */
+  function asTable(node) {
+    node.setAttribute("role", "table");
+    return node;
+  }
+
+
   function fill(node, list, make, emptyText) {
-    node.textContent = "";
+    // The sortable header now lives inside the table, so clearing must not remove it.
+    for (const child of [...node.children]) if (!child.classList.contains("lhead")) child.remove();
     if (!list.length) { node.append(el("div", "empty", emptyText)); return; }
     list.forEach((x, i) => node.append(make(x, i)));
   }
@@ -1495,9 +1523,9 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
   function renderValue({ all }) {
     const node = $("valueList");
     node.textContent = "";
-    header(node);
     const view = applyView(all);
-    const body = el("div", "ledger");
+    const body = asTable(el("div", "ledger"));
+    header(body, "value");
     fill(body, view.slice(0, CAP), entry,
       state.search ? "No upgrade matches that search." : "Nothing left to buy — every purchasable family is at its best tier.");
     node.append(body);
@@ -1516,8 +1544,8 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
       head.append(el("p", null, "Every family at the highest tier currently listed. The rest of the ceiling is locked behind things coins cannot buy — see “Can’t buy”."));
       node.append(head, el("div", "note"));
     }
-    header(node);
-    const body = el("div", "ledger");
+    const body = asTable(el("div", "ledger"));
+    header(body, "max");
     fill(body, view, entry, "Every purchasable family is already maxed.");
     node.append(body);
   }
@@ -1545,7 +1573,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
     const node = $("planList");
     node.textContent = "";
-    const body = el("div", "ledger");
+    const body = asTable(el("div", "ledger"));
     // No sort header here: the plan is an ordered shopping list, and re-sorting it would
     // imply the order is arbitrary when it is the solver's output.
     fill(body, s.picks, entry, "Nothing fits that budget — the cheapest upgrade costs more.");
@@ -1555,6 +1583,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
   function renderEarn({ earn }) {
     fill($("earnList"), earn, (e, i) => {
       const row = el("div", "entry");
+    row.setAttribute("role", "row");
       row.append(el("div", "idx", String(i + 1)));
       const body = el("div", "body");
       const l1 = nameAndRarity(el("div", "line1"), e.name, e.rarity);
@@ -1642,6 +1671,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     fill($("bagList"), list.slice(0, BAG_CAP), (a) => {
       const has = state.owned[a.id];
       const row = el("div", "entry pick" + (has ? " own" : ""));
+      row.setAttribute("role", "row");
 
       // Wrapped in a label so the tap target is 30px, not the checkbox's 17px — this is
       // the primary interaction and most of it happens on a phone.
@@ -1664,6 +1694,9 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
       const l1 = nameAndRarity(el("div", "line1"), a.name, a.rarity);
       if (a.rift) l1.append(el("span", "chip rift", "rift"));
       if (a.soulbound) l1.append(el("span", "chip soul", "soulbound"));
+      // Dungeon items count double inside the Catacombs, which is worth knowing while
+      // ticking a bag — the earn list already flagged them and this one did not.
+      if (a.dungeon) l1.append(el("span", "chip dungeon", "dungeon"));
       body.append(l1);
 
       const fam = cat.families[a.family];

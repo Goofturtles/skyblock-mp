@@ -205,7 +205,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
 .lhead .h-name { text-align: left; }
 .lhead button:hover { color: var(--ink); }
-.lhead button[aria-pressed="true"] { color: var(--accent); }
+.lhead button[aria-sort]:not([aria-sort="none"]) { color: var(--accent); }
 .lhead .arrow { font-size: 9px; margin-left: 3px; }
 
 .entry {
@@ -241,7 +241,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 .c-power { color: var(--gain); font-size: 13.5px; font-weight: 500; line-height: 1.5; }
 .c-price { color: var(--coin); font-size: 14.5px; font-weight: 500; line-height: 1.5; }
 /* This is the column the list is ranked by, so it is the one that carries weight. */
-.c-rate { color: var(--ink); font-size: 14.5px; font-weight: 600; line-height: 1.5; }
+.c-rate { color: var(--ink); font-size: 14.5px; font-weight: 600; line-height: 1.5; white-space: nowrap; }
 .c-rate .unit { color: var(--ink-3); font-size: 11px; font-weight: 400; margin-left: 2px; }
 .m-gain, .sep.m-only { display: none; }
 .line2 .m-gain { color: var(--gain); font-weight: 600; font-variant-numeric: tabular-nums; }
