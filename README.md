@@ -1,4 +1,10 @@
-# Accessory Power Planner
+# Accessory Power Ledger
+
+**Live site: <https://goofturtles.github.io/skyblock-mp/>**
+
+Prices load instantly from a committed snapshot; hit **Live prices** and it pulls current
+Auction House BIN listings for all 305 tradeable accessories in about 20 seconds, straight
+from the browser. No API key, no server.
 
 Tells you the **cheapest Accessory Power in Hypixel SkyBlock right now** — which accessories to buy,
 in what order, what the top tier of each family costs, and what the best shopping list is for a given
@@ -10,7 +16,14 @@ budget. Prices come live from the Auction House on every load.
 node server.js
 ```
 
-Then open <http://localhost:3512>.
+Then open <http://localhost:3512>. The local server additionally sweeps all 47 Auction House
+pages itself, which is the most complete price source of the three.
+
+Rebuild the two pages after editing anything in `artifact/`:
+
+```bash
+node build-local.js && node build-artifact.js
+```
 
 ## What it does
 
