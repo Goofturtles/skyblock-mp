@@ -141,9 +141,15 @@ const TRUSTED_HOPS = (() => {
     if (Number.isInteger(n) && n >= 0) return n;
     console.warn(`TRUSTED_PROXY_HOPS="${raw}" is not a non-negative integer; ignoring it.`);
   }
-  // Render puts one router in front. If this service ever sits behind another proxy too,
-  // measure with /whoami and pin TRUSTED_PROXY_HOPS rather than guessing.
-  return process.env.RENDER ? 1 : 0;
+  // Default to the measured value, not the guess it replaced: if this variable is ever
+  // dropped (service recreated, blueprint redeploy), falling back to 1 would silently put
+  // every visitor in one rate-limit bucket again.
+  if (process.env.RENDER) {
+    console.warn("TRUSTED_PROXY_HOPS is not set; assuming 3 (Cloudflare + two Render layers). "
+      + "Confirm with /whoami and pin it.");
+    return 3;
+  }
+  return 0;
 })();
 
 function clientIp(req) {
@@ -434,7 +440,10 @@ async function handle(req, res) {
     // Library errors carry string codes ("Z_DATA_ERROR", "ERR_OUT_OF_RANGE"). Passing one
     // to writeHead throws ERR_HTTP_INVALID_STATUS_CODE from inside this catch, which
     // becomes an unhandled rejection and takes the whole instance down.
-    const code = Number.isInteger(e.code) && e.code >= 400 && e.code <= 599 ? e.code : 500;
+    // An upstream that timed out is our problem, not the caller's — and AbortSignal's
+    // TimeoutError carries no numeric code, so it would otherwise read as a 500.
+    const code = Number.isInteger(e.code) && e.code >= 400 && e.code <= 599 ? e.code
+      : e.name === "TimeoutError" ? 502 : 500;
     res.writeHead(code, headers);
     res.end(JSON.stringify({ error: code === 500 ? "Could not read that bag." : String(e.message || e) }));
     console.warn(`bag ${name} failed (${code}): ${e.message}`);
