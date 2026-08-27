@@ -38,20 +38,27 @@ node build-local.js && node build-artifact.js
 
 ## Loading a bag by username
 
-Type a username, hit **Load my bag**, and it ticks every accessory you hold.
+Type a username, hit **Load my bag**, and it ticks every accessory you hold. **No API key.**
 
-Hypixel only serves profile contents to a key holder — there is no keyless route to a player's
-accessory bag any more (SkyCrypt's public API is behind a WAF, and Soopy's parsed profiles drop the
-bag). So the username lookup needs a **free Hypixel API key** from
-[developer.hypixel.net](https://developer.hypixel.net/dashboard): sign in with Minecraft, create an
-app, paste the key into "API key…".
+Hypixel serves profile contents only to a key holder, and no keyless mirror exposes the accessory
+bag (SkyCrypt's public API is behind a WAF; Soopy's parsed profiles strip inventories). SkyCrypt
+solves that by holding a key on its own server, and so does this: `proxy/server.js` runs on Render,
+holds the key in `HYPIXEL_KEY`, resolves the UUID, reads the bag and decodes the NBT, and returns a
+plain list of item ids. The key never reaches the browser. An origin allowlist, a per-IP rate limit
+and a per-UUID cache keep it from being borrowed or burned.
 
-The key is kept in your browser's localStorage and sent straight to Hypixel — it never touches this
-server. The player also has to have **Inventory API** switched on (`/api` in SkyBlock → API
-Settings), or the bag comes back empty even with a valid key.
+You still need **Inventory API** switched on in SkyBlock (`/api` → API Settings), or the bag comes
+back empty — that part is the player's own setting and nothing can work around it.
 
-**Without a key everything else still works** — tick what you own in "My bag" and every ranking,
-price and budget plan is live and correct.
+Prefer not to go through the proxy? Put your own key in under "Use my own key" and the lookup goes
+straight from your browser to Hypixel instead. Prefer not to be looked up at all? Tick what you own
+in "My bag" and every ranking, price and budget plan still works.
+
+### Running the proxy yourself
+
+    cd proxy && HYPIXEL_KEY=<your-key> node server.js     # port 3513
+
+Zero dependencies. Add your origin to `ALLOWED` in `proxy/server.js`.
 
 ## The power rules it implements
 
@@ -79,12 +86,18 @@ All verified against [hypixelskyblock.minecraft.wiki](https://hypixelskyblock.mi
 | `api.hypixel.net/v2/skyblock/bazaar` | Recombobulator 3000 price |
 | NEU `constants/parents.json` | Accessory upgrade families |
 | NEU `constants/abiphone.json` | Abiphone contact roster |
-| `api.ashcon.app` | Username → UUID |
+| playerdb / minetools / ashcon | Username → UUID (three, because ashcon 404s some real accounts) |
+| `skyblock-mp-bag.onrender.com` | Holds the Hypixel key; serves the bag and the full-AH price sweep |
 
-Auction items only carry their internal id inside gzipped NBT, so `server.js` decodes every BIN
-accessory listing (~4,500 of them) to get exact ids *and* whether each one is recombobulated — which
-is why the tool can price "buy it recombobulated" separately from "buy it and recombobulate it
-yourself". Sweep takes about 4 seconds and is cached for 3 minutes.
+Auction items only carry their internal id inside gzipped NBT, so every BIN accessory listing
+(~4,400 of them) is decoded to get exact ids *and* whether each one is recombobulated — which is why
+the tool can price "buy it recombobulated" separately from "buy it and recombobulate it yourself".
+The sweep covers all 46 pages in about 4 seconds and is cached for 3 minutes.
+
+**On the numbers**: those ~4,400 listings collapse to roughly 350 *price points* — one lowest price
+per item x rarity x recombobulated — across about 238 distinct accessories. The remaining ~67
+tradeable accessories genuinely have no buy-it-now listing at any given moment. The page states all
+four figures in its footer rather than reporting one and letting it be mistaken for another.
 
 ## Files
 
