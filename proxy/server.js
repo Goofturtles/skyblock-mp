@@ -18,7 +18,8 @@ const zlib = require("zlib");
 const PORT = process.env.PORT || 3513;
 const KEY = process.env.HYPIXEL_KEY || "";
 
-// Only these origins may call the proxy, so the key cannot be borrowed by other sites.
+// Browser callers must come from one of these origins — enforced for /bag below, not
+// merely advertised in a CORS header, which stops nothing outside a browser.
 const ALLOWED = new Set([
   "https://goofturtles.github.io",
   "http://localhost:3512",
@@ -28,12 +29,16 @@ const ALLOWED = new Set([
 const CACHE_MS = 3 * 60 * 1000;   // protects the key's rate limit
 const RATE_MAX = 30;              // requests per IP per window
 const RATE_WINDOW = 60 * 1000;
+const MAX_TRACKED_IPS = 5000;     // both maps are swept; neither may grow without bound
+const MAX_CACHED_BAGS = 500;
+const UPSTREAM_TIMEOUT = 15000;   // a stalled upstream must not pin a sweep forever
+const MAX_NBT_BYTES = 4 << 20;    // a gzip bomb should fail, not exhaust the instance
 
 const cache = new Map();          // uuid -> { at, payload }
 const hits = new Map();           // ip -> { at, n }
 
 const PRICE_TTL = 3 * 60 * 1000;  // the Auction House itself only updates every 60s
-const PAGE_CONCURRENCY = 16;
+const PAGE_CONCURRENCY = 5;       // 16 x ~2.5MB parsed at once is near a 512MB instance's ceiling
 let priceCache = null;            // { at, payload }
 let priceSweep = null;            // de-dupes concurrent sweeps
 
@@ -43,7 +48,13 @@ function readNBT(buf) {
   let o = 0;
   const u8 = () => buf.readUInt8(o++);
   const i32 = () => { const v = buf.readInt32BE(o); o += 4; return v; };
-  const str = () => { const l = buf.readUInt16BE(o); o += 2; const s = buf.toString("utf8", o, o + l); o += l; return s; };
+  const str = () => { const l = buf.readUInt16BE(o); o += 2; const s = buf.toString("utf8", o, o + l); skip(l); return s; };
+  // A negative length would rewind the cursor and the compound loop below would spin
+  // forever on attacker-influenced bytes.
+  const skip = (n) => {
+    if (!Number.isInteger(n) || n < 0 || o + n > buf.length) throw new Error("malformed NBT");
+    o += n;
+  };
   function val(t) {
     switch (t) {
       case 1: { const v = buf.readInt8(o); o += 1; return v; }
@@ -52,12 +63,16 @@ function readNBT(buf) {
       case 4: { const v = buf.readBigInt64BE(o); o += 8; return Number(v); }
       case 5: { const v = buf.readFloatBE(o); o += 4; return v; }
       case 6: { const v = buf.readDoubleBE(o); o += 8; return v; }
-      case 7: { const n = i32(); o += n; return null; }
+      case 7: { const n = i32(); skip(n); return null; }
       case 8: return str();
-      case 9: { const it = u8(), n = i32(), a = []; for (let i = 0; i < n; i++) a.push(val(it)); return a; }
+      case 9: {
+        const it = u8(); const n = i32();
+        if (n < 0 || n > buf.length) throw new Error("malformed NBT list");
+        const a = []; for (let i = 0; i < n; i++) a.push(val(it)); return a;
+      }
       case 10: { const c = {}; for (;;) { const tt = u8(); if (tt === 0) break; c[str()] = val(tt); } return c; }
-      case 11: { const n = i32(); o += n * 4; return null; }
-      case 12: { const n = i32(); o += n * 8; return null; }
+      case 11: { const n = i32(); skip(n * 4); return null; }
+      case 12: { const n = i32(); skip(n * 8); return null; }
       default: throw new Error("bad NBT tag " + t);
     }
   }
@@ -69,7 +84,11 @@ function readNBT(buf) {
 /* ---------------- helpers ---------------- */
 
 async function getJSON(url, opts) {
-  const r = await fetch(url, { headers: { "user-agent": "skyblock-mp-proxy/1.0" }, ...opts });
+  const r = await fetch(url, {
+    headers: { "user-agent": "skyblock-mp-proxy/1.0" },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+    ...opts,
+  });
   const body = await r.json().catch(() => null);
   return { ok: r.ok, status: r.status, body };
 }
@@ -101,8 +120,33 @@ async function resolveUuid(name) {
   throw e;
 }
 
+/**
+ * Every entry in X-Forwarded-For is client-supplied except the ones appended by proxies
+ * we actually sit behind, so the header is only worth reading when we know how many
+ * those are. Render puts exactly one load balancer in front and sets RENDER=true;
+ * running bare (locally) there is none, and the header is pure attacker input.
+ *
+ * With one trusted hop the rightmost entry is the address that hop observed — the real
+ * caller. Keying on the leftmost instead would let anyone forge a fresh identity per
+ * request, bypassing the rate limit and growing the map without bound.
+ */
+const TRUSTED_HOPS = Number(process.env.TRUSTED_PROXY_HOPS ?? (process.env.RENDER ? 1 : 0));
+
+function clientIp(req) {
+  if (TRUSTED_HOPS > 0) {
+    const parts = String(req.headers["x-forwarded-for"] || "").split(",").map((x) => x.trim()).filter(Boolean);
+    const i = parts.length - TRUSTED_HOPS;
+    if (i >= 0 && parts[i]) return parts[i];
+  }
+  return req.socket.remoteAddress || "?";
+}
+
 function rateLimited(ip) {
   const now = Date.now();
+  if (hits.size >= MAX_TRACKED_IPS) {
+    for (const [k, v] of hits) if (now - v.at > RATE_WINDOW) hits.delete(k);
+    if (hits.size >= MAX_TRACKED_IPS) hits.clear();
+  }
   const h = hits.get(ip);
   if (!h || now - h.at > RATE_WINDOW) { hits.set(ip, { at: now, n: 1 }); return false; }
   h.n++;
@@ -139,7 +183,7 @@ async function readBag(name) {
     throw e;
   }
 
-  const items = readNBT(zlib.gunzipSync(Buffer.from(blob, "base64"))).i || [];
+  const items = readNBT(zlib.gunzipSync(Buffer.from(blob, "base64"), { maxOutputLength: MAX_NBT_BYTES })).i || [];
   const seen = new Map();
   for (const it of items) {
     const extra = it?.tag?.ExtraAttributes;
@@ -157,6 +201,7 @@ async function readBag(name) {
     count: seen.size,
     fetched: Date.now(),
   };
+  if (cache.size >= MAX_CACHED_BAGS) cache.clear();
   cache.set(uuid, { at: Date.now(), payload });
   return payload;
 }
@@ -187,7 +232,7 @@ async function sweepAuctions() {
       if (!a.bin || a.category !== "accessories") continue;
       scanned++;
       try {
-        const nbt = readNBT(zlib.gunzipSync(Buffer.from(a.item_bytes, "base64")));
+        const nbt = readNBT(zlib.gunzipSync(Buffer.from(a.item_bytes, "base64"), { maxOutputLength: MAX_NBT_BYTES }));
         const extra = nbt.i && nbt.i[0] && nbt.i[0].tag && nbt.i[0].tag.ExtraAttributes;
         if (!extra || !extra.id) { undecodable++; continue; }
         const key = `${extra.id}|${a.tier}|${extra.rarity_upgrades ? 1 : 0}`;
@@ -218,6 +263,12 @@ async function sweepAuctions() {
     if (p) recombobulator = { buy: p.quick_status.buyPrice, sell: p.quick_status.sellPrice };
   } catch { /* bazaar is a bonus, not a requirement */ }
 
+  // A few dropped pages would silently remove real listings and produce wrong "cheapest"
+  // answers, so refuse rather than serve a confident partial sweep.
+  if (!total || pagesRead < total * 0.9) {
+    throw new Error(`Auction House sweep incomplete: read ${pagesRead} of ${total} pages.`);
+  }
+
   const accessories = new Set(Object.keys(lowestBin).map((k) => k.slice(0, k.indexOf("|"))));
   return {
     source: "live",
@@ -246,6 +297,22 @@ function prices() {
 /* ---------------- server ---------------- */
 
 http.createServer(async (req, res) => {
+  try {
+    await handle(req, res);
+  } catch (e) {
+    // Last line of defence: nothing thrown by a handler may reach the event loop.
+    console.error("unhandled request error:", e && e.stack ? e.stack : e);
+    if (!res.headersSent) res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+    if (!res.writableEnded) res.end(JSON.stringify({ error: "Internal error." }));
+  }
+}).listen(PORT, () => {
+  console.log(`accessory-bag proxy on :${PORT} — key ${KEY ? "configured" : "MISSING"}`);
+});
+
+// A rejected promise with no handler must never be allowed to exit the process.
+process.on("unhandledRejection", (e) => console.error("unhandledRejection:", e));
+
+async function handle(req, res) {
   const origin = req.headers.origin;
   const headers = { "content-type": "application/json; charset=utf-8" };
   if (origin && ALLOWED.has(origin)) {
@@ -285,14 +352,21 @@ http.createServer(async (req, res) => {
 
   if (url.pathname !== "/bag") { res.writeHead(404, headers); res.end(JSON.stringify({ error: "Not found" })); return; }
 
+  // /bag spends the key's Hypixel quota, so it is the one route that must be refused to
+  // callers this site does not serve. /prices needs no key and stays open.
+  if (!origin || !ALLOWED.has(origin)) {
+    res.writeHead(403, headers);
+    res.end(JSON.stringify({ error: "This lookup service only answers the Accessory Power Ledger." }));
+    return;
+  }
+
   if (!KEY) {
     res.writeHead(503, headers);
     res.end(JSON.stringify({ error: "This proxy has no Hypixel API key configured yet." }));
     return;
   }
 
-  const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
-  if (rateLimited(ip)) {
+  if (rateLimited(clientIp(req))) {
     res.writeHead(429, headers);
     res.end(JSON.stringify({ error: "Too many lookups — wait a minute and try again." }));
     return;
@@ -311,11 +385,12 @@ http.createServer(async (req, res) => {
     res.end(JSON.stringify(payload));
     console.log(`bag ${payload.username}/${payload.profile}: ${payload.count} accessories`);
   } catch (e) {
-    const code = e.code || 500;
+    // Library errors carry string codes ("Z_DATA_ERROR", "ERR_OUT_OF_RANGE"). Passing one
+    // to writeHead throws ERR_HTTP_INVALID_STATUS_CODE from inside this catch, which
+    // becomes an unhandled rejection and takes the whole instance down.
+    const code = Number.isInteger(e.code) && e.code >= 400 && e.code <= 599 ? e.code : 500;
     res.writeHead(code, headers);
-    res.end(JSON.stringify({ error: String(e.message || e) }));
+    res.end(JSON.stringify({ error: code === 500 ? "Could not read that bag." : String(e.message || e) }));
     console.warn(`bag ${name} failed (${code}): ${e.message}`);
   }
-}).listen(PORT, () => {
-  console.log(`accessory-bag proxy on :${PORT} — key ${KEY ? "configured" : "MISSING"}`);
-});
+}

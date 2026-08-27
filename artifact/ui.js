@@ -84,10 +84,11 @@
   /* ---------------- boot ---------------- */
 
   /** First URL that returns usable price data, else an empty set. */
-  async function firstOf(urls) {
+  async function firstOf(urls, timeoutMs) {
     for (const u of urls) {
       try {
-        const r = await fetch(u);
+        // Without this a sleeping free instance holds the whole chain open.
+        const r = await fetch(u, timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : undefined);
         if (!r.ok) continue;
         const j = await r.json();
         if (j && j.lowestBin && Object.keys(j.lowestBin).length) return normalisePrices(j);
@@ -117,18 +118,19 @@
     try {
       cat = MP.index(window.__CATALOGUE__ || await (await fetch("data/accessories.json")).json());
     } catch (e) {
+      console.error("catalogue load failed:", e);
       fatal("Could not load the accessory catalogue, so there is nothing to rank yet. " +
             "Reload the page — if it keeps happening the deploy is probably mid-flight.");
       return;
     }
 
+    // Paint with whatever is already to hand. The full sweep lives on a free instance
+    // that sleeps, and waiting for it used to leave the page inert — no tabs, no
+    // rankings, dead buttons — for the better part of a minute on the first visit.
     const cached = load(LS.prices, null);
     if (cached && cached.lowestBin && Date.now() - cached.generated < PRICE_TTL) prices = cached;
     else prices = window.__PRICES__ || null;
-
-    // Full Auction House first (the proxy sweeps all 46 pages), then the local server's
-    // own sweep, then the committed snapshot. Any of the three leaves the page usable.
-    if (!prices) prices = await firstOf([...(isLocal() ? ["api/prices"] : []), PROXY + "/prices", "data/prices-snapshot.json"]);
+    if (!prices) prices = await firstOf(["data/prices-snapshot.json"], 8000);
 
     $("contacts").max = String(cat.rules.abiphoneContactsKnown);
     $("contacts").value = state.contacts;
@@ -139,8 +141,28 @@
       stamp();
       render();
     } catch (e) {
+      console.error(e);
       fatal("Something went wrong building the page: " + (e && e.message ? e.message : e));
+      return;
     }
+
+    upgradePrices();   // deliberately not awaited
+  }
+
+  /**
+   * Swap in a complete Auction House sweep once one arrives. The page is already
+   * usable by now, so a slow or missing source costs nothing but freshness.
+   */
+  async function upgradePrices() {
+    if (window.__PRICES__) return;                       // inlined build: CSP blocks this anyway
+    const sources = isLocal() ? ["api/prices", PROXY + "/prices"] : [PROXY + "/prices"];
+    const fresh = await firstOf(sources, 70000);         // a sleeping instance takes ~50s to wake
+    if (!fresh || !fresh.lowestBin || !Object.keys(fresh.lowestBin).length) return;
+    if (prices.generated && fresh.generated <= prices.generated) return;
+    prices = fresh;
+    save(LS.prices, prices);
+    stamp();
+    render();
   }
 
   const isLocal = () => /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
@@ -154,6 +176,7 @@
       if (!node) continue;
       node.textContent = "";
       const box = el("div", "callout warn");
+      box.setAttribute("role", "alert");
       box.append(el("h3", null, "This page could not start"));
       box.append(el("p", null, message));
       node.append(box);
@@ -175,8 +198,9 @@
 
     const tradeable = cat ? cat.accessories.filter((a) => a.tradeable).length : 0;
     const unlisted = tradeable && priced ? tradeable - priced : 0;
+    const complete = !prices.expectedPages || !prices.pages || prices.pages >= prices.expectedPages;
     const scope = prices.listings
-      ? `Swept all ${prices.expectedPages || 46} Auction House pages: ${prices.listings.toLocaleString()} buy-it-now accessory listings, ` +
+      ? `Swept ${complete ? "all" : prices.pages + " of"} ${prices.expectedPages || 46} Auction House pages: ${prices.listings.toLocaleString()} buy-it-now accessory listings, ` +
         `collapsed to ${variants} lowest prices across ${priced} accessories` +
         (unlisted > 0 ? `. The other ${unlisted} tradeable accessories have no buy-it-now listing at all right now.` : ".")
       : `${variants} lowest prices across ${priced} accessories.`;
@@ -373,20 +397,21 @@
       const bag = key ? await bagViaKey(name, key) : await bagViaProxy(name);
 
       const owned = {};
-      let matched = 0;
       for (const a of bag.accessories) {
         if (!cat.byId[a.id]) continue;
         // Duplicates are common; keep the recombobulated copy, it is the one that counts.
         if (!owned[a.id] || (a.recomb && !owned[a.id].recomb)) owned[a.id] = { recomb: !!a.recomb };
-        matched++;
       }
+      // Count distinct accessories, not raw items: the proxy already de-duplicates and a
+      // personal key does not, so counting items reported two different totals for one bag.
+      const matched = Object.keys(owned).length;
       if (!matched) throw new Error(`${bag.username}'s accessory bag came back empty. Check Inventory API is on in SkyBlock (/api → API Settings).`);
 
       state.owned = owned;
       state.bagOrder = [];
       save(LS.owned, state.owned);
       render();
-      const skipped = bag.accessories.length - matched;
+      const skipped = new Set(bag.accessories.map((a) => a.id)).size - matched;
       note(`Loaded ${matched} accessories from ${bag.username}${bag.profile ? ` (${bag.profile})` : ""}.`
         + (skipped > 0 ? ` ${skipped} items were not power-granting accessories.` : ""), "good");
     } catch (e) {
@@ -422,7 +447,12 @@
   async function bagViaKey(name, key) {
     const { uuid: flat, username } = await resolveUuid(name);
     note(`Fetching ${username}'s SkyBlock profiles…`);
-    const res = await fetch(`https://api.hypixel.net/v2/skyblock/profiles?uuid=${flat}`, { headers: { "API-Key": key } });
+    let res;
+    try {
+      res = await fetch(`https://api.hypixel.net/v2/skyblock/profiles?uuid=${flat}`, { headers: { "API-Key": key } });
+    } catch {
+      throw new Error("Could not reach Hypixel with your key. Check your connection, or clear the key to use the built-in lookup instead.");
+    }
     const data = await res.json().catch(() => ({}));
     if (!data.success) {
       throw new Error(data.cause === "Invalid API key"
