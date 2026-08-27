@@ -18,7 +18,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="artifact/style.css?v=d18e4903">
+<link rel="stylesheet" href="artifact/style.css?v=6168dee1">
 
 </head>
 <body>
@@ -39,8 +39,8 @@ if (!document.querySelector('meta[name="viewport"]')) {
       <div class="pricebar-row">
         <span class="stamp"><span class="led" id="led"></span><span id="stampText">loading…</span></span>
         <button id="liveBtn" type="button">Live prices</button>
-        <button id="progBtn" type="button">My progress</button>
-        <button id="keyBtn" type="button">Use my own key</button>
+        <button id="progBtn" type="button" aria-expanded="false" aria-controls="progbox">My progress</button>
+        <button id="keyBtn" type="button" aria-expanded="false" aria-controls="keybox">Use my own key</button>
       </div>
       <div class="pricebar-row">
         <div class="progress" id="progress" role="progressbar" aria-label="Fetching prices" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div class="progress-fill" id="progressFill"></div></div>
@@ -51,7 +51,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
 
 <main class="wrap">
 
-  <div class="keybox" id="progbox" hidden>
+  <div class="keybox" id="progbox" role="region" aria-labelledby="progBtn" hidden>
     <p>
       39 accessories are locked behind slayer levels, Heart of the Mountain tiers or trophy
       fishing. Tell the planner what you have and it stops recommending things you cannot get.
@@ -77,7 +77,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
     </p>
   </div>
 
-  <div class="keybox" id="keybox" hidden>
+  <div class="keybox" id="keybox" role="region" aria-labelledby="keyBtn" hidden>
     <p>
       <strong>You do not need a key.</strong> Hypixel only hands a player's accessory bag to a key
       holder, so this site keeps one on a small server of its own and does the lookup for you — the
@@ -240,7 +240,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
 
 <script src="nbt.js?v=242a5ac2"></script>
 <script src="mp.js?v=86f46a38"></script>
-<script src="artifact/ui.js?v=639a8f0e"></script>
+<script src="artifact/ui.js?v=24568451"></script>
 
 </body>
 </html>

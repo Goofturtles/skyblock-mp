@@ -122,8 +122,14 @@ h1 {
 
 /* A locked accessory is still worth seeing — it is a goal — so it reads as dimmed
    and labelled, never hidden by colour alone. */
-.entry.locked .iname { opacity: .55; }
-.entry.locked .num { opacity: .5; }
+/* Locked rows were dimmed with opacity, which composites at paint and leaves the
+   computed colour untouched — so a contrast checker reading computed styles reports
+   nothing while epic purple at .55 is actually 2.67:1. The name keeps its full rarity
+   colour and the row is marked with a rail instead. Dimming the numbers was no better:
+   opacity applies to the whole subtree and a child cannot undo it, so the already-dim
+   "/AP" suffix inside dropped to 3.36:1. Locked is carried by the rail and by the
+   "needs ..." chip, which is real text at full contrast. */
+.entry.locked { box-shadow: inset 2px 0 0 var(--alert); }
 .chip.locked { color: var(--alert); border-color: #5c3f28; }
 .dead-mark { color: var(--alert); font-weight: 600; }
 .slot-head { margin: 18px 0 8px; font-size: 14px; font-weight: 600; line-height: 1.45; }

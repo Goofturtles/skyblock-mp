@@ -31,8 +31,8 @@ if (!document.querySelector('meta[name="viewport"]')) {
       <div class="pricebar-row">
         <span class="stamp"><span class="led" id="led"></span><span id="stampText">loading…</span></span>
         <button id="liveBtn" type="button">Live prices</button>
-        <button id="progBtn" type="button">My progress</button>
-        <button id="keyBtn" type="button">Use my own key</button>
+        <button id="progBtn" type="button" aria-expanded="false" aria-controls="progbox">My progress</button>
+        <button id="keyBtn" type="button" aria-expanded="false" aria-controls="keybox">Use my own key</button>
       </div>
       <div class="pricebar-row">
         <div class="progress" id="progress" role="progressbar" aria-label="Fetching prices" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div class="progress-fill" id="progressFill"></div></div>
@@ -43,7 +43,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
 
 <main class="wrap">
 
-  <div class="keybox" id="progbox" hidden>
+  <div class="keybox" id="progbox" role="region" aria-labelledby="progBtn" hidden>
     <p>
       39 accessories are locked behind slayer levels, Heart of the Mountain tiers or trophy
       fishing. Tell the planner what you have and it stops recommending things you cannot get.
@@ -69,7 +69,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
     </p>
   </div>
 
-  <div class="keybox" id="keybox" hidden>
+  <div class="keybox" id="keybox" role="region" aria-labelledby="keyBtn" hidden>
     <p>
       <strong>You do not need a key.</strong> Hypixel only hands a player's accessory bag to a key
       holder, so this site keeps one on a small server of its own and does the lookup for you — the

@@ -26,7 +26,7 @@
   let prices = null;
 
   const state = {
-    owned: load(LS.owned, {}),
+    owned: (() => { const o = load(LS.owned, null); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; })(),
     contacts: Number(load(LS.contacts, 0)) || 0,
     tab: "value",
     search: "",
@@ -37,9 +37,20 @@
     liveState: "idle",
     // What the player has unlocked. Absent means "not unlocked", so a gated accessory
     // stays hidden until they say otherwise rather than being recommended on a guess.
-    progress: load(LS.progress, { slayer: {}, hotm: 0, trophy: {} }),
+    progress: safeProgress(load(LS.progress, null)),
     hideLocked: load(LS.hideLocked, true),
   };
+
+  /**
+   * localStorage is user-editable and survives across versions, so anything read from it
+   * has to be treated as untrusted. A malformed value here used to throw inside wire(),
+   * which boot() catches by blanking the whole page — unrecoverable on every reload.
+   */
+  function safeProgress(v) {
+    const p = v && typeof v === "object" ? v : {};
+    const obj = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : {});
+    return { slayer: obj(p.slayer), hotm: Number(p.hotm) || 0, trophy: obj(p.trophy) };
+  }
 
   /* ---------------- storage ---------------- */
 
@@ -588,9 +599,12 @@
   function entry(o, i) {
     const row = el("div", "entry" + (o.locked ? " locked" : ""));
     row.setAttribute("role", "row");
-    row.append(el("div", "idx", i == null ? "" : String(i + 1)));
+    const idx = el("div", "idx", i == null ? "" : String(i + 1));
+    idx.setAttribute("role", "cell");
+    row.append(idx);
 
     const body = el("div", "body");
+    body.setAttribute("role", "cell");
     const l1 = nameAndRarity(el("div", "line1"), o.name, o.rarity, { recomb: o.recomb });
     if (o.locked) l1.append(el("span", "chip locked", "needs " + o.needs.join(" + ")));
     if (o.familyName && o.familyName !== o.name) l1.append(el("span", "line-of", o.familyName + " line"));
@@ -704,13 +718,27 @@
     node.textContent = "";
     // One row per family: offers() emits a row per reachable tier, and listing both the
     // Ring and the Artifact above it reads as "buy both" when you would only ever buy one.
-    const view = applyView(MP.bestPerFamily(all));
+    // Collapse AFTER dropping what the player cannot get: choosing the best rate across
+    // locked offers and then filtering the winner away deleted the family entirely, hiding
+    // a purchasable upgrade underneath it.
+    const reachable = state.hideLocked ? all.filter((o) => !o.locked) : all;
+    const view = applyView(MP.bestPerFamily(reachable));
     const body = asTable(el("div", "ledger"));
     header(body, "value");
     fill(body, view.slice(0, CAP), entry,
       state.search ? "No upgrade matches that search." : "Nothing left to buy — every purchasable family is at its best tier.");
     node.append(body);
     if (view.length > CAP) node.append(el("div", "empty", `Showing ${CAP} of ${view.length}. Narrow it with the search box.`));
+    // Hiding things you cannot get is only helpful if you know it is happening.
+    const hidden = state.hideLocked ? MP.bestPerFamily(all).filter((o) => o.locked).length : 0;
+    if (hidden) {
+      const n = node.appendChild(el("div", "empty",
+        `${hidden} more ${hidden === 1 ? "accessory is" : "accessories are"} hidden because you cannot get them yet — `));
+      const b = el("button", "linkish", "show them anyway");
+      b.type = "button";
+      b.addEventListener("click", () => { $("hideLocked").checked = false; state.hideLocked = false; save(LS.hideLocked, false); render(); });
+      n.append(b);
+    }
   }
 
   function renderMax({ maxTier }) {
@@ -732,6 +760,7 @@
   }
 
   function renderPlan({ all, evalNow }) {
+    const buyable = state.hideLocked ? all.filter((o) => !o.locked) : all;
     const budget = parseCoins($("budget").value);
     const sum = $("planSummary");
     sum.textContent = "";
@@ -740,7 +769,7 @@
       $("planList").textContent = "";
       return;
     }
-    const s = MP.solveBudget(all, budget);
+    const s = MP.solveBudget(buyable, budget);
     const after = evalNow.total + s.gain;
     const cell = (label, value, sub) => {
       const c = el("div", "cell");
@@ -762,15 +791,19 @@
   }
 
   function renderEarn({ earn }) {
-    fill($("earnList"), earn, (e, i) => {
+    fill(asTable($("earnList")), earn, (e, i) => {
       const row = el("div", "entry");
     row.setAttribute("role", "row");
-      row.append(el("div", "idx", String(i + 1)));
+      const idxE = el("div", "idx", String(i + 1));
+      idxE.setAttribute("role", "cell");
+      row.append(idxE);
       const body = el("div", "body");
+      body.setAttribute("role", "cell");
       const l1 = nameAndRarity(el("div", "line1"), e.name, e.rarity);
       if (e.rift) l1.append(el("span", "chip rift", "rift"));
       if (e.soulbound) l1.append(el("span", "chip soul", "soulbound " + String(e.soulbound).toLowerCase()));
       if (e.dungeon) l1.append(el("span", "chip dungeon", "dungeon"));
+      if (e.locked) l1.append(el("span", "chip locked", "needs " + e.needs.join(" + ")));
       body.append(l1, el("div", "line2", "no auction listings — has to be earned"));
       row.append(body);
       row.append(el("div", "num c-power", "+" + e.gain));
@@ -881,7 +914,7 @@
       return;
     }
 
-    const h1 = el("div", "slot-head", `Take these out (${plan.freed})`);
+    const h1 = el("h3", "slot-head", `Take these out (${plan.freed})`);
     h1.append(el("span", "sub", "each holds a slot and adds nothing you are not already getting"));
     deadNode.append(h1);
 
@@ -889,15 +922,18 @@
     fill(deadList, plan.dead, (dw) => {
       const row = el("div", "entry");
       row.setAttribute("role", "row");
-      row.append(el("div", "idx", ""));
+      const idx0 = el("div", "idx", "");
+      idx0.setAttribute("role", "cell");
+      row.append(idx0);
       const body = el("div", "body");
+      body.setAttribute("role", "cell");
       body.append(nameAndRarity(el("div", "line1"), dw.name, dw.rarity));
       body.append(el("div", "line2", dw.beatenBy
         ? `outranked by your ${dw.beatenBy} (${dw.beatenByMp} AP) in the ${dw.familyName} line`
         : "grants no accessory power at all"));
       row.append(body);
-      row.append(cell("num c-power", `${dw.mp} AP`, "power it contributes"));
-      row.append(cell("num c-price", "—", "price"));
+      row.append(cell("num c-power", `${dw.mp} AP`, "idle power, contributing nothing"));
+      row.append(cell("num c-price", "—", null));
       const r = cell("num c-rate", "wasted", "status");
       r.classList.add("dead-mark");
       row.append(r);
@@ -906,7 +942,7 @@
     deadNode.append(deadList);
 
     if (plan.fills.length) {
-      const h2 = el("div", "slot-head", `Put these in instead (${plan.fills.length})`);
+      const h2 = el("h3", "slot-head", `Put these in instead (${plan.fills.length})`);
       h2.append(el("span", "sub", "the most power those slots can hold, from what you can actually get"));
       fillsNode.append(h2);
       const fillList = asTable(el("div", "ledger"));
@@ -920,7 +956,7 @@
     const shown = Math.min(list.length, BAG_CAP);
     $("bagCount").textContent = `${Object.keys(state.owned).length} owned · showing ${shown} of ${list.length}`;
 
-    fill($("bagList"), list.slice(0, BAG_CAP), (a) => {
+    fill(asTable($("bagList")), list.slice(0, BAG_CAP), (a) => {
       const has = state.owned[a.id];
       const row = el("div", "entry pick" + (has ? " own" : ""));
       row.setAttribute("role", "row");
@@ -988,7 +1024,7 @@
 
   /* ---------------- tabs ---------------- */
 
-  const TABS = ["value", "max", "plan", "earn", "free", "bag"];
+  const TABS = ["value", "max", "plan", "earn", "free", "slots", "bag"];
 
   function selectTab(name) {
     state.tab = name;
@@ -1054,11 +1090,32 @@
     $("liveBtn").addEventListener("click", refreshLive);
     $("loadBtn").addEventListener("click", loadProfile);
     $("username").addEventListener("keydown", (e) => { if (e.key === "Enter") loadProfile(); });
-    $("keyBtn").addEventListener("click", () => {
-      const box = $("keybox");
-      box.hidden = !box.hidden;
-      if (!box.hidden) { $("progbox").hidden = true; $("apikey").value = load(LS.key, ""); $("apikey").focus(); }
-    });
+    /** Toggles a disclosure panel and keeps its button's announced state honest. */
+    const disclose = (btnId, boxId, otherBtnId, otherBoxId, focusId, onOpen) => {
+      const box = $(boxId), other = $(otherBoxId);
+      const open = box.hidden;
+      box.hidden = !open;
+      $(btnId).setAttribute("aria-expanded", String(open));
+      if (open) {
+        other.hidden = true;
+        $(otherBtnId).setAttribute("aria-expanded", "false");
+        if (onOpen) onOpen();
+        $(focusId).focus();
+      }
+    };
+
+    // Escape closes whichever panel is open, and hands focus back to its button.
+    for (const [btnId, boxId] of [["progBtn", "progbox"], ["keyBtn", "keybox"]]) {
+      $(boxId).addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        $(boxId).hidden = true;
+        $(btnId).setAttribute("aria-expanded", "false");
+        $(btnId).focus();
+      });
+    }
+
+    $("keyBtn").addEventListener("click", () =>
+      disclose("keyBtn", "keybox", "progBtn", "progbox", "apikey", () => { $("apikey").value = load(LS.key, ""); }));
 
     // ---- what the player has unlocked ----
     const progInputs = [
@@ -1074,17 +1131,15 @@
       if (kind === "num") input.value = String(saved || 0);
       else input.value = saved || "NONE";
       input.addEventListener("input", () => {
-        set(kind === "num" ? Math.max(0, Number(input.value) || 0) : input.value);
+        const cap = Number(input.max) || Infinity;
+        set(kind === "num" ? Math.min(cap, Math.max(0, Number(input.value) || 0)) : input.value);
         save(LS.progress, state.progress);
         renderSoon();
       });
     }
 
-    $("progBtn").addEventListener("click", () => {
-      const box = $("progbox");
-      box.hidden = !box.hidden;
-      if (!box.hidden) { $("keybox").hidden = true; $("sl-zombie").focus(); }
-    });
+    $("progBtn").addEventListener("click", () =>
+      disclose("progBtn", "progbox", "keyBtn", "keybox", "sl-zombie"));
 
     $("hideLocked").checked = state.hideLocked;
     $("hideLocked").addEventListener("change", () => {
