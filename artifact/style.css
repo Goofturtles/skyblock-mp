@@ -302,6 +302,8 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
 .foot { margin-top: 32px; border-top: 1px solid var(--rule); padding: 16px 0 34px; color: var(--ink-3); font-size: 12.5px; line-height: 1.65; }
 .foot p { margin: 0 0 6px; max-width: 80ch; }
+/* Required by Hypixel API policy: the product must be clear it is unaffiliated. */
+.foot .disclaimer { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule-soft); color: var(--ink-3); }
 
 /* ---------- narrow ---------- */
 

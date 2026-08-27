@@ -43,6 +43,7 @@ const hits = new Map();           // ip -> { at, n }
 const PRICE_TTL = 3 * 60 * 1000;  // the Auction House itself only updates every 60s
 const SWEEP_COOLDOWN = 60 * 1000; // after a failed sweep, before another 46-page attempt
 const PAGE_CONCURRENCY = 5;       // 16 x ~2.5MB parsed at once is near a 512MB instance's ceiling
+let keyRejected = false;          // set once Hypixel refuses our key, cleared on success
 let priceCache = null;            // { at, payload }
 let priceSweep = null;            // de-dupes concurrent sweeps
 
@@ -187,13 +188,27 @@ async function readBag(name) {
   });
 
   if (!body || body.success !== true) {
+    const cause = (body && body.cause) || "";
+    // The visitor did not supply this key — telling them "Invalid API key" reads as
+    // though they got something wrong. Development keys expire after 72 hours, so this
+    // is a state this service will genuinely reach, and the message has to point at
+    // the one thing a visitor can actually do about it.
+    if (/key/i.test(cause)) {
+      const e = new Error("This site's Hypixel key is not working right now, so name lookups are down. "
+        + "You can still tick your accessories by hand, or add your own key under “Use my own key”.");
+      e.code = 502;
+      e.keyProblem = true;
+      keyRejected = true;
+      console.error(`HYPIXEL KEY REJECTED: "${cause}" — replace HYPIXEL_KEY.`);
+      throw e;
+    }
     // Hypixel being down, throttling us, or returning an unparseable body is our problem,
     // not the caller's — only a genuine rejection of the request is a 4xx.
-    const upstreamFault = !ok && (status >= 500 || status === 429) || !body;
-    const e = new Error(body?.cause || (upstreamFault
+    const upstreamFault = (!ok && (status >= 500 || status === 429)) || !body;
+    const e = new Error(cause || (upstreamFault
       ? "Hypixel is not answering right now. Try again in a moment."
       : "Hypixel rejected the request."));
-    e.code = upstreamFault || /key/i.test(body?.cause || "") ? 502 : 400;
+    e.code = upstreamFault ? 502 : 400;
     throw e;
   }
   if (!body.profiles || !body.profiles.length) {
@@ -221,6 +236,7 @@ async function readBag(name) {
     if (!seen.has(extra.id) || (recomb && !seen.get(extra.id).recomb)) seen.set(extra.id, { id: extra.id, recomb });
   }
 
+  keyRejected = false;
   const payload = {
     username,
     uuid,
@@ -371,6 +387,7 @@ async function handle(req, res) {
     res.end(JSON.stringify({
       ok: true,
       keyConfigured: KEY.length > 0,
+      keyRejectedByHypixel: keyRejected,
       // Shape only — never any characters of the key itself. Enough to tell a
       // whitespace-padded paste or a truncated copy from a genuinely wrong key.
       keyShape: {

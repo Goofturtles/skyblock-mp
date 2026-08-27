@@ -323,6 +323,8 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
 .foot { margin-top: 32px; border-top: 1px solid var(--rule); padding: 16px 0 34px; color: var(--ink-3); font-size: 12.5px; line-height: 1.65; }
 .foot p { margin: 0 0 6px; max-width: 80ch; }
+/* Required by Hypixel API policy: the product must be clear it is unaffiliated. */
+.foot .disclaimer { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule-soft); color: var(--ink-3); }
 
 /* ---------- narrow ---------- */
 
@@ -512,6 +514,11 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     Item data from Hypixel's public resources, families from NotEnoughUpdates, prices swept from the
     Auction House. What you tick stays in your browser. Looking up a username sends only that name —
     to a UUID lookup (playerdb, minetools or ashcon) and to this site's bag service.
+  </p>
+  <p class="disclaimer">
+    Not affiliated with, endorsed by, or in any way officially connected to Hypixel. “Hypixel” and
+    “Hypixel SkyBlock” are trademarks of Hypixel Inc., used here only to describe what this tool
+    reads. This is an unofficial fan-made calculator.
   </p>
 </footer>
 
