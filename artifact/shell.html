@@ -1,0 +1,159 @@
+<title>Accessory Power Ledger</title>
+<script>
+/* The Artifact host supplies a viewport meta; a standalone copy of this file does not,
+   and without one phones lay the page out at 980px. Idempotent either way. */
+if (!document.querySelector('meta[name="viewport"]')) {
+  const m = document.createElement("meta");
+  m.name = "viewport";
+  m.content = "width=device-width, initial-scale=1";
+  document.head.appendChild(m);
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>/*__CSS__*/</style>
+
+<header class="masthead">
+  <div class="wrap masthead-in">
+    <div>
+      <h1>Accessory Power Ledger</h1>
+      <p class="tagline">
+        Every accessory in Hypixel SkyBlock, ranked by what a point of Accessory Power actually costs.
+        Tick what you own and it works out exactly what to buy next.
+      </p>
+    </div>
+    <div class="pricebar">
+      <div class="pricebar-row">
+        <span class="stamp"><span class="led" id="led"></span><span id="stampText">loading…</span></span>
+        <button id="liveBtn" type="button">Live prices</button>
+      </div>
+      <div class="pricebar-row">
+        <div class="progress" id="progress" hidden><div class="progress-fill" id="progressFill"></div></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="strip" aria-live="polite">
+    <div class="cell">
+      <div class="cell-label">Accessory Power</div>
+      <div class="cell-value accent" id="ap">0</div>
+      <div class="cell-sub" id="apSub">tick what you own to personalise</div>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Stat multiplier</div>
+      <div class="cell-value" id="mult">×0.00</div>
+      <div class="cell-sub">29.97·ln(0.0019·AP+1)<sup>1.2</sup></div>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Accessories held</div>
+      <div class="cell-value" id="held">0</div>
+      <div class="cell-sub" id="heldSub">of 423 in the game</div>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Left on the table</div>
+      <div class="cell-value" id="headroom">0</div>
+      <div class="cell-sub" id="headroomSub">AP not yet collected</div>
+    </div>
+  </div>
+  <div class="meter"><div class="meter-fill" id="meter"></div></div>
+
+  <div class="callout" id="note" hidden></div>
+
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Views">
+    <button class="tab" role="tab" aria-selected="true" aria-controls="panel-value" data-tab="value">Best value <span class="count"></span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-max" data-tab="max" tabindex="-1">Max tier <span class="count"></span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-plan" data-tab="plan" tabindex="-1">Budget plan</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-earn" data-tab="earn" tabindex="-1">Can’t buy <span class="count"></span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-free" data-tab="free" tabindex="-1">Free wins</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-bag" data-tab="bag" tabindex="-1">My bag <span class="count"></span></button>
+  </nav>
+
+  <div class="panels">
+
+    <div class="onboard" id="onboard">
+      <h2>Three steps to a personalised buy order</h2>
+      <div class="step">
+        <span class="step-n">1</span>
+        <p><b>Tick what you own</b> in My bag. Search by name — you only need the accessories you actually hold.</p>
+      </div>
+      <div class="step">
+        <span class="step-n">2</span>
+        <p><b>Set your budget</b> and the planner returns the exact shopping list that buys the most power.</p>
+      </div>
+      <div class="step">
+        <span class="step-n">3</span>
+        <p><b>Check Free wins</b> for power that costs nothing — contacts, the Rift Prism, dead duplicates.</p>
+      </div>
+      <div class="onboard-actions">
+        <button id="startBtn" class="primary" type="button">Start ticking my bag</button>
+        <button id="skipBtn" type="button">Just show me the rankings</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="grow" id="searchWrap"><input id="search" type="search" placeholder="Search accessories…" aria-label="Search upgrades"></div>
+      <label class="field">
+        <span class="field-label">Budget</span>
+        <input id="budget" type="text" inputmode="numeric" value="100m">
+      </label>
+      <label class="field">
+        <span class="field-label">Contacts</span>
+        <input id="contacts" type="number" min="0" max="200" value="0">
+      </label>
+      <label class="switch"><input id="useRecomb" type="checkbox" checked><span>Consider recombobulating</span></label>
+    </div>
+
+    <section id="panel-value" role="tabpanel" aria-label="Best value">
+      <p class="note">Every purchase that would raise your Accessory Power, cheapest per point first. Read it top to bottom — that is the buy order.</p>
+      <div id="valueList"></div>
+    </section>
+
+    <section id="panel-max" role="tabpanel" aria-label="Max tier" hidden>
+      <p class="note">The highest tier of each accessory family currently listed, and what reaching it costs from what you own.</p>
+      <div id="maxList"></div>
+    </section>
+
+    <section id="panel-plan" role="tabpanel" aria-label="Budget plan" hidden>
+      <div class="plan" id="planSummary"></div>
+      <div id="planList"></div>
+    </section>
+
+    <section id="panel-earn" role="tabpanel" aria-label="Can’t buy" hidden>
+      <p class="note">Not for sale at any price. These have to be earned — which makes them the cheapest power in the game, since they cost only time.</p>
+      <div class="ledger" id="earnList"></div>
+    </section>
+
+    <section id="panel-free" role="tabpanel" aria-label="Free wins" hidden>
+      <div class="stack" id="freeList"></div>
+    </section>
+
+    <section id="panel-bag" role="tabpanel" aria-label="My bag" hidden>
+      <div class="toolbar">
+        <div class="grow"><input id="bagSearch" type="search" placeholder="Search 423 accessories…" aria-label="Search accessories to tick"></div>
+        <span class="hint" id="bagCount"></span>
+        <button id="bagClear" type="button">Clear all</button>
+      </div>
+      <div class="ledger" id="bagList"></div>
+    </section>
+
+  </div>
+</main>
+
+<footer class="wrap foot">
+  <p id="footFresh"></p>
+  <p>
+    Power rules verified against the SkyBlock wiki: rarity gives 3/5/8/12/16/22 from Common to Mythic;
+    only the highest-power accessory in a family counts; Hegemony doubles; the Rift Prism is a flat 11;
+    the Abicase adds 1 per 2 Abiphone contacts; and the Celestial Starstone gives nothing at all despite
+    topping the Crux tree.
+  </p>
+  <p>Item data from Hypixel's public resources, families from NotEnoughUpdates, prices from the Auction House. Nothing you tick leaves your browser.</p>
+</footer>
+
+<script>window.__CATALOGUE__ = /*__CATALOGUE__*/null; window.__PRICES__ = /*__PRICES__*/null;</script>
+<script>/*__ENGINE__*/</script>
+<script>/*__UI__*/</script>

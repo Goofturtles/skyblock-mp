@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "skyblock-mp", "runtimeExecutable": "node", "runtimeArgs": ["server.js"], "port": 3512 }
+  ]
+}

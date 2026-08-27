@@ -1,0 +1,1311 @@
+<!doctype html>
+<title>Accessory Power Ledger</title>
+<script>
+/* The Artifact host supplies a viewport meta; a standalone copy of this file does not,
+   and without one phones lay the page out at 980px. Idempotent either way. */
+if (!document.querySelector('meta[name="viewport"]')) {
+  const m = document.createElement("meta");
+  m.name = "viewport";
+  m.content = "width=device-width, initial-scale=1";
+  document.head.appendChild(m);
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>/* Accessory Power Ledger — shared by the local app and the hosted build.
+   Deliberately single-theme dark: Minecraft rarity colours are calibrated for dark
+   grounds, and rarity here is data, not decoration. Every colour is painted
+   explicitly so the page holds on any host ground. */
+
+:root {
+  /* The Artifact host's reset declares color-scheme:light; without this, checkboxes,
+     number spinners and the search clear button render as light-mode controls. */
+  color-scheme: dark;
+
+  --ground: #0e1220;
+  --ground-2: #131829;
+  --surface: #171d31;
+  --surface-2: #1d2439;
+  --rule: #262e47;
+  --rule-soft: #1e2438;
+
+  --ink: #e9ecf6;
+  --ink-2: #a2abc4;   /* 7.3:1 on --surface */
+  --ink-3: #838da8;   /* 5.0:1 on --surface — the dimmest tier still clears AA */
+
+  --accent: #4dd0c7;      /* teal — belongs to no rarity, so it never lies about one */
+  --accent-deep: #2a9d94;
+  --accent-ink: #06231f;
+  --coin: #f0b429;        /* gold, and only ever coins */
+  --gain: #5ed17c;
+  --alert: #ff9a5a;
+
+  --r-common: #cdd4e4;
+  --r-uncommon: #5ce65c;
+  --r-rare: #6f8cff;
+  --r-epic: #cc66ff;
+  --r-legendary: #ffb03a;
+  --r-mythic: #ff77ff;
+  --r-supreme: #ff5f5f;
+  --r-special: #ff6b6b;
+  --r-very_special: #ff6b6b;
+  --r-divine: #66e8ff;
+
+  --display: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --radius: 12px;
+
+  /* One grid drives the header row and every ledger row, so columns stay aligned. */
+  --cols: 3px 30px minmax(0, 1fr) 84px 96px 88px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.wrap { max-width: 1160px; margin: 0 auto; padding: 0 clamp(14px, 3vw, 28px); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------- masthead ---------- */
+
+.masthead { border-bottom: 1px solid var(--rule); background: linear-gradient(180deg, #141a2c, var(--ground)); }
+
+.masthead-in {
+  display: flex; flex-wrap: wrap; gap: 16px 28px;
+  align-items: flex-end; justify-content: space-between; padding: 24px 0 20px;
+}
+
+h1 {
+  margin: 0; font-size: clamp(22px, 3vw, 30px); font-weight: 700;
+  letter-spacing: -.022em; line-height: 1.22; text-wrap: balance;
+}
+
+.tagline { margin: 5px 0 0; color: var(--ink-2); font-size: 14.5px; line-height: 1.5; max-width: 62ch; }
+
+.pricebar { display: flex; flex-direction: column; gap: 7px; align-items: flex-start; }
+.pricebar-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.stamp {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px; border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--surface); color: var(--ink-2);
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+}
+
+.led { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.led.stale { background: var(--alert); }
+.led.busy { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+
+.hint { color: var(--ink-3); font-size: 12.5px; line-height: 1.5; }
+
+/* ---------- summary ---------- */
+
+.strip {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 1px;
+  background: var(--rule-soft); border: 1px solid var(--rule);
+  border-radius: var(--radius) var(--radius) 0 0; overflow: hidden; margin-top: 20px;
+}
+
+.cell { background: var(--surface); padding: 14px 16px; }
+.cell-label { color: var(--ink-3); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; line-height: 1.6; }
+.cell-value { font-family: var(--mono); font-size: 25px; font-weight: 600; line-height: 1.35; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.cell-value.accent { color: var(--accent); }
+.cell-sub { color: var(--ink-3); font-size: 12px; line-height: 1.5; margin-top: 2px; }
+
+.meter { height: 5px; background: var(--ground-2); border: 1px solid var(--rule); border-top: none; border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
+.meter-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent-deep), var(--accent)); transition: width .5s cubic-bezier(.2,.6,.3,1); }
+
+/* ---------- tabs ---------- */
+
+.tabs { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--rule); margin-top: 20px; }
+
+.tab {
+  background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0;
+  color: var(--ink-3); padding: 10px 14px; font-family: var(--display);
+  font-size: 14px; font-weight: 500; line-height: 1.5; cursor: pointer;
+}
+
+.tab:hover { color: var(--ink); background: var(--surface); }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tab .count { color: var(--ink-3); font-family: var(--mono); font-size: 11.5px; margin-left: 6px; }
+.tab[aria-selected="true"] .count { color: var(--accent); }
+
+.panels { padding: 16px 0 0; }
+.note { color: var(--ink-2); font-size: 13.5px; line-height: 1.6; margin: 0 0 14px; max-width: 76ch; }
+
+/* ---------- toolbar ---------- */
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 12px; }
+.toolbar .grow { flex: 1 1 200px; min-width: 0; }
+
+input[type="text"], input[type="number"], input[type="search"], input[type="password"], select {
+  background: var(--ground-2); border: 1px solid var(--rule); border-radius: 9px;
+  color: var(--ink); font-family: var(--mono); font-size: 13.5px; line-height: 1.5; padding: 8px 12px;
+}
+
+input[type="search"] { font-family: var(--display); width: 100%; }
+select { font-family: var(--display); cursor: pointer; }
+input::placeholder { color: var(--ink-3); }
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field-label { color: var(--ink-3); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; line-height: 1.6; }
+.field input[type="text"], .field input[type="number"] { width: 118px; }
+
+.switch { display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 13.5px; line-height: 1.5; cursor: pointer; }
+.switch input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; flex: none; }
+
+button {
+  font-family: var(--display); font-size: 13.5px; font-weight: 500; line-height: 1.5;
+  color: var(--ink); background: var(--surface); border: 1px solid var(--rule);
+  border-radius: 9px; padding: 8px 14px; cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+
+button:hover:not(:disabled) { background: var(--surface-2); border-color: #33405e; }
+button:disabled { opacity: .55; cursor: default; }
+
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3; }
+
+/* ---------- ledger ---------- */
+
+.ledger { display: flex; flex-direction: column; gap: 5px; }
+
+.lhead {
+  display: grid; grid-template-columns: var(--cols); gap: 0 12px; align-items: center;
+  padding: 0 16px 7px; border-bottom: 1px solid var(--rule); margin-bottom: 6px;
+}
+
+.lhead span, .lhead button {
+  color: var(--ink-3); font-family: var(--display); font-size: 11px; font-weight: 500;
+  letter-spacing: .09em; text-transform: uppercase; line-height: 1.6;
+  background: none; border: none; padding: 0; text-align: right; cursor: pointer;
+}
+
+.lhead .h-name { text-align: left; }
+.lhead button:hover { color: var(--ink); }
+.lhead button[aria-sort]:not([aria-sort="none"]) { color: var(--accent); }
+.lhead .arrow { font-size: 9px; margin-left: 3px; }
+
+.entry {
+  display: grid; grid-template-columns: var(--cols); gap: 0 12px; align-items: center;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
+  overflow: hidden; padding-right: 16px;
+}
+
+.entry:hover { border-color: #35415f; }
+.edge { align-self: stretch; background: var(--r-common); }
+.idx { font-family: var(--mono); font-size: 12px; color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; line-height: 1.5; padding: 12px 0; }
+
+.body { min-width: 0; padding: 10px 0; }
+.line1 { display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; line-height: 1.4; }
+.iname { font-weight: 600; font-size: 14.5px; line-height: 1.45; letter-spacing: -.005em; }
+.rarity { font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; line-height: 1.6; }
+.line-of { color: var(--ink-3); font-size: 12px; line-height: 1.5; }
+.line2 { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--ink-2); font-size: 12.5px; line-height: 1.55; margin-top: 1px; }
+.sep { color: var(--ink-3); }
+
+.chip { display: inline-block; padding: 1px 7px 2px; border: 1px solid var(--rule); border-radius: 5px; font-size: 10.5px; line-height: 1.6; color: var(--ink-2); background: var(--ground-2); }
+.chip.recomb { color: var(--accent); border-color: #26504e; }
+.chip.rift { color: var(--r-epic); border-color: #4a2d61; }
+.chip.soul { color: var(--alert); border-color: #5c3f28; }
+.chip.dungeon { color: var(--r-legendary); border-color: #5c4526; }
+
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; padding: 10px 0; }
+.c-power { color: var(--gain); font-size: 13.5px; font-weight: 600; line-height: 1.5; }
+.c-price { color: var(--coin); font-size: 14.5px; font-weight: 600; line-height: 1.5; }
+.c-rate { color: var(--ink-2); font-size: 13px; line-height: 1.5; }
+
+/* ---------- bag rows ---------- */
+
+.entry.pick { grid-template-columns: 3px auto minmax(0, 1fr) auto; padding-right: 14px; }
+.entry.own { border-color: #2f5c46; background: #142118; }
+.own-box { width: 17px; height: 17px; accent-color: var(--gain); cursor: pointer; }
+
+.recomb-tick { display: flex; gap: 6px; align-items: center; color: var(--ink-3); font-size: 12px; line-height: 1.5; cursor: pointer; white-space: nowrap; padding: 10px 0; }
+.recomb-tick input { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; flex: none; }
+.entry.own .recomb-tick { color: var(--ink-2); }
+
+/* ---------- callouts ---------- */
+
+.callout { background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 10px; padding: 14px 17px; }
+.callout.warn { border-left-color: var(--alert); }
+.callout.good { border-left-color: var(--gain); }
+.callout h3 { margin: 0 0 5px; font-size: 15px; font-weight: 600; line-height: 1.45; }
+.callout p { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.62; }
+.stack { display: flex; flex-direction: column; gap: 10px; }
+
+/* ---------- first run ---------- */
+
+.onboard {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius);
+  padding: 18px 20px; margin-bottom: 16px;
+}
+
+.onboard h2 { margin: 0 0 4px; font-size: 16px; font-weight: 600; line-height: 1.4; grid-column: 1 / -1; }
+.step { display: flex; gap: 11px; align-items: flex-start; }
+.step-n {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--ground-2); border: 1px solid var(--rule); color: var(--accent);
+  font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+  display: grid; place-items: center; line-height: 1.6; margin-top: 1px;
+}
+.step p { margin: 0; color: var(--ink-2); font-size: 13px; line-height: 1.55; }
+.step b { color: var(--ink); font-weight: 600; }
+.onboard-actions { grid-column: 1 / -1; display: flex; gap: 9px; flex-wrap: wrap; margin-top: 2px; }
+
+/* ---------- plan ---------- */
+
+.plan { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 1px; background: var(--rule-soft); border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; margin-bottom: 14px; }
+
+/* ---------- misc ---------- */
+
+.empty { color: var(--ink-3); font-size: 13.5px; line-height: 1.6; text-align: center; padding: 26px 8px; }
+.progress { height: 4px; background: var(--ground-2); border-radius: 99px; overflow: hidden; width: 150px; }
+.progress-fill { height: 100%; width: 0; background: var(--accent); transition: width .2s linear; }
+
+.foot { margin-top: 32px; border-top: 1px solid var(--rule); padding: 16px 0 34px; color: var(--ink-3); font-size: 12.5px; line-height: 1.65; }
+.foot p { margin: 0 0 6px; max-width: 80ch; }
+
+/* ---------- narrow ---------- */
+
+@media (max-width: 760px) {
+  :root { --cols: 3px minmax(0, 1fr) 76px 84px; }
+  .lhead .h-idx, .lhead .h-rate { display: none; }
+  .entry .idx, .entry .c-rate { display: none; }
+  .entry.pick { grid-template-columns: 3px auto minmax(0, 1fr) auto; }
+  .cell-value { font-size: 21px; }
+  /* The recombobulated toggle stays reachable — it is worth up to 12 AP per item. */
+  .recomb-tick span { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<header class="masthead">
+  <div class="wrap masthead-in">
+    <div>
+      <h1>Accessory Power Ledger</h1>
+      <p class="tagline">
+        Every accessory in Hypixel SkyBlock, ranked by what a point of Accessory Power actually costs.
+        Tick what you own and it works out exactly what to buy next.
+      </p>
+    </div>
+    <div class="pricebar">
+      <div class="pricebar-row">
+        <span class="stamp"><span class="led" id="led"></span><span id="stampText">loading…</span></span>
+        <button id="liveBtn" type="button">Live prices</button>
+      </div>
+      <div class="pricebar-row">
+        <div class="progress" id="progress" hidden><div class="progress-fill" id="progressFill"></div></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="strip" aria-live="polite">
+    <div class="cell">
+      <div class="cell-label">Accessory Power</div>
+      <div class="cell-value accent" id="ap">0</div>
+      <div class="cell-sub" id="apSub">tick what you own to personalise</div>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Stat multiplier</div>
+      <div class="cell-value" id="mult">×0.00</div>
+      <div class="cell-sub">29.97·ln(0.0019·AP+1)<sup>1.2</sup></div>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Accessories held</div>
+      <div class="cell-value" id="held">0</div>
+      <div class="cell-sub" id="heldSub">of 423 in the game</div>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Left on the table</div>
+      <div class="cell-value" id="headroom">0</div>
+      <div class="cell-sub" id="headroomSub">AP not yet collected</div>
+    </div>
+  </div>
+  <div class="meter"><div class="meter-fill" id="meter"></div></div>
+
+  <div class="callout" id="note" hidden></div>
+
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Views">
+    <button class="tab" role="tab" aria-selected="true" aria-controls="panel-value" data-tab="value">Best value <span class="count"></span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-max" data-tab="max" tabindex="-1">Max tier <span class="count"></span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-plan" data-tab="plan" tabindex="-1">Budget plan</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-earn" data-tab="earn" tabindex="-1">Can’t buy <span class="count"></span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-free" data-tab="free" tabindex="-1">Free wins</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-bag" data-tab="bag" tabindex="-1">My bag <span class="count"></span></button>
+  </nav>
+
+  <div class="panels">
+
+    <div class="onboard" id="onboard">
+      <h2>Three steps to a personalised buy order</h2>
+      <div class="step">
+        <span class="step-n">1</span>
+        <p><b>Tick what you own</b> in My bag. Search by name — you only need the accessories you actually hold.</p>
+      </div>
+      <div class="step">
+        <span class="step-n">2</span>
+        <p><b>Set your budget</b> and the planner returns the exact shopping list that buys the most power.</p>
+      </div>
+      <div class="step">
+        <span class="step-n">3</span>
+        <p><b>Check Free wins</b> for power that costs nothing — contacts, the Rift Prism, dead duplicates.</p>
+      </div>
+      <div class="onboard-actions">
+        <button id="startBtn" class="primary" type="button">Start ticking my bag</button>
+        <button id="skipBtn" type="button">Just show me the rankings</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="grow" id="searchWrap"><input id="search" type="search" placeholder="Search accessories…" aria-label="Search upgrades"></div>
+      <label class="field">
+        <span class="field-label">Budget</span>
+        <input id="budget" type="text" inputmode="numeric" value="100m">
+      </label>
+      <label class="field">
+        <span class="field-label">Contacts</span>
+        <input id="contacts" type="number" min="0" max="200" value="0">
+      </label>
+      <label class="switch"><input id="useRecomb" type="checkbox" checked><span>Consider recombobulating</span></label>
+    </div>
+
+    <section id="panel-value" role="tabpanel" aria-label="Best value">
+      <p class="note">Every purchase that would raise your Accessory Power, cheapest per point first. Read it top to bottom — that is the buy order.</p>
+      <div id="valueList"></div>
+    </section>
+
+    <section id="panel-max" role="tabpanel" aria-label="Max tier" hidden>
+      <p class="note">The highest tier of each accessory family currently listed, and what reaching it costs from what you own.</p>
+      <div id="maxList"></div>
+    </section>
+
+    <section id="panel-plan" role="tabpanel" aria-label="Budget plan" hidden>
+      <div class="plan" id="planSummary"></div>
+      <div id="planList"></div>
+    </section>
+
+    <section id="panel-earn" role="tabpanel" aria-label="Can’t buy" hidden>
+      <p class="note">Not for sale at any price. These have to be earned — which makes them the cheapest power in the game, since they cost only time.</p>
+      <div class="ledger" id="earnList"></div>
+    </section>
+
+    <section id="panel-free" role="tabpanel" aria-label="Free wins" hidden>
+      <div class="stack" id="freeList"></div>
+    </section>
+
+    <section id="panel-bag" role="tabpanel" aria-label="My bag" hidden>
+      <div class="toolbar">
+        <div class="grow"><input id="bagSearch" type="search" placeholder="Search 423 accessories…" aria-label="Search accessories to tick"></div>
+        <span class="hint" id="bagCount"></span>
+        <button id="bagClear" type="button">Clear all</button>
+      </div>
+      <div class="ledger" id="bagList"></div>
+    </section>
+
+  </div>
+</main>
+
+<footer class="wrap foot">
+  <p id="footFresh"></p>
+  <p>
+    Power rules verified against the SkyBlock wiki: rarity gives 3/5/8/12/16/22 from Common to Mythic;
+    only the highest-power accessory in a family counts; Hegemony doubles; the Rift Prism is a flat 11;
+    the Abicase adds 1 per 2 Abiphone contacts; and the Celestial Starstone gives nothing at all despite
+    topping the Crux tree.
+  </p>
+  <p>Item data from Hypixel's public resources, families from NotEnoughUpdates, prices from the Auction House. Nothing you tick leaves your browser.</p>
+</footer>
+
+<script>window.__CATALOGUE__ = {"generated":"2026-08-26T23:19:15.970Z","source":{"items":"https://api.hypixel.net/v2/resources/skyblock/items","parents":"https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/master/constants/parents.json","abiphone":"https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/master/constants/abiphone.json"},"rules":{"mpByRarity":{"COMMON":3,"UNCOMMON":5,"RARE":8,"EPIC":12,"LEGENDARY":16,"MYTHIC":22,"DIVINE":28,"SPECIAL":3,"VERY_SPECIAL":5,"ULTIMATE":1,"ADMIN":22},"ladder":["COMMON","UNCOMMON","RARE","EPIC","LEGENDARY","MYTHIC"],"overrides":{"RIFT_PRISM":11,"CRUX_TALISMAN_7":0},"dynamic":{"HEGEMONY_ARTIFACT":"double","ABICASE":"abiphone"},"abiphoneContactsKnown":86,"statMultiplier":"29.97 * (ln(0.0019 * AP + 1)) ^ 1.2"},"familiesFromParents":89,"accessories":[{"id":"TARANTULA_RING","name":"Tarantula Ring","rarity":"LEGENDARY","mp":16,"family":"TARANTULA_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ARCHAEOLOGIST_COMPASS","name":"Archaeologist's Compass","rarity":"COMMON","mp":3,"family":"ARCHAEOLOGIST_COMPASS","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"ANITA_TALISMAN","name":"Anita's Talisman","rarity":"COMMON","mp":3,"family":"ANITA_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PESTHUNTER_RING","name":"Pesthunter Ring","rarity":"RARE","mp":8,"family":"PESTHUNTER_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ANITA_ARTIFACT","name":"Anita's Artifact","rarity":"RARE","mp":8,"family":"ANITA_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ANITA_RING","name":"Anita's Ring","rarity":"UNCOMMON","mp":5,"family":"ANITA_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PESTHUNTER_BADGE","name":"Pesthunter Badge","rarity":"UNCOMMON","mp":5,"family":"PESTHUNTER_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PESTHUNTER_ARTIFACT","name":"Pesthunter Artifact","rarity":"EPIC","mp":12,"family":"PESTHUNTER_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PARTY_HAT_SLOTH","name":"Sloth Hat of Celebration","rarity":"SPECIAL","mp":3,"family":"PARTY_HAT_SLOTH","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":false},{"id":"PARTY_HAT_CRAB_ANIMATED","name":"Crab Hat of Celebration - 2022 Edition","rarity":"SPECIAL","mp":3,"family":"PARTY_HAT_CRAB_ANIMATED","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":false},{"id":"PARTY_HAT_CRAB","name":"Crab Hat of Celebration","rarity":"SPECIAL","mp":3,"family":"PARTY_HAT_CRAB","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":false},{"id":"FISH_AFFINITY_TALISMAN","name":"Fish Affinity Talisman","rarity":"RARE","mp":8,"family":"FISH_AFFINITY_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FROZEN_CHICKEN","name":"Frozen Chicken","rarity":"RARE","mp":8,"family":"FRIED_FROZEN_CHICKEN","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"STUDENT_STUDIES","name":"Student's Studies","rarity":"UNCOMMON","mp":5,"family":"SCARF_GRIMOIRE","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"PHD_GRIMOIRE","name":"PhD's Grimoire","rarity":"EPIC","mp":12,"family":"SCARF_GRIMOIRE","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"APPLICANT_STATEMENT","name":"Applicant's Statement","rarity":"COMMON","mp":3,"family":"SCARF_GRIMOIRE","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"MASTER_THESIS","name":"Master's Thesis","rarity":"RARE","mp":8,"family":"SCARF_GRIMOIRE","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"FRIED_FROZEN_CHICKEN","name":"Fried Frozen Chicken","rarity":"EPIC","mp":12,"family":"FRIED_FROZEN_CHICKEN","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"JUNK_TALISMAN","name":"Junk Talisman","rarity":"COMMON","mp":3,"family":"JUNK_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"JUNK_RING","name":"Junk Ring","rarity":"UNCOMMON","mp":5,"family":"JUNK_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"JUNK_ARTIFACT","name":"Junk Artifact","rarity":"RARE","mp":8,"family":"JUNK_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WITCH_TALISMAN","name":"Witch's Talisman","rarity":"COMMON","mp":3,"family":"WITCH_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WITCH_RING","name":"Witch's Ring","rarity":"UNCOMMON","mp":5,"family":"WITCH_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WITCH_ARTIFACT","name":"Witch's Artifact","rarity":"RARE","mp":8,"family":"WITCH_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CENTURY_TALISMAN","name":"Talisman of the Century","rarity":"COMMON","mp":3,"family":"CENTURY_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RUNEBOOK","name":"Runebook","rarity":"COMMON","mp":3,"family":"RUNEBOOK","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":false},{"id":"CENTURY_ARTIFACT","name":"Artifact of the Century","rarity":"RARE","mp":8,"family":"CENTURY_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CENTURY_RING","name":"Ring of the Century","rarity":"UNCOMMON","mp":5,"family":"CENTURY_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PRESTIGE_CHOCOLATE_REALM","name":"Prestige Chocolate Realm","rarity":"LEGENDARY","mp":16,"family":"PRESTIGE_CHOCOLATE_REALM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RICH_CHOCOLATE_CHUNK","name":"Rich Chocolate Chunk","rarity":"RARE","mp":8,"family":"PRESTIGE_CHOCOLATE_REALM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"NIBBLE_CHOCOLATE_STICK","name":"Nibble Chocolate Stick","rarity":"COMMON","mp":3,"family":"PRESTIGE_CHOCOLATE_REALM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GANACHE_CHOCOLATE_SLAB","name":"Ganache Chocolate Slab","rarity":"EPIC","mp":12,"family":"PRESTIGE_CHOCOLATE_REALM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SMOOTH_CHOCOLATE_BAR","name":"Smooth Chocolate Bar","rarity":"UNCOMMON","mp":5,"family":"PRESTIGE_CHOCOLATE_REALM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GREAT_SPOOK_TALISMAN","name":"Great Spook Talisman","rarity":"COMMON","mp":3,"family":"GREAT_SPOOK_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GREAT_SPOOK_ARTIFACT","name":"Great Spook Artifact","rarity":"RARE","mp":8,"family":"GREAT_SPOOK_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GREAT_SPOOK_RING","name":"Great Spook Ring","rarity":"UNCOMMON","mp":5,"family":"GREAT_SPOOK_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BITS_TALISMAN","name":"Bits Talisman","rarity":"RARE","mp":8,"family":"BITS_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ABICASE","name":"Abicase","rarity":"RARE","mp":8,"family":"ABICASE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true,"dynamic":"abiphone"},{"id":"MINERAL_TALISMAN","name":"Mineral Talisman","rarity":"RARE","mp":8,"family":"GLOSSY_MINERAL_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GLOSSY_MINERAL_TALISMAN","name":"Glossy Mineral Talisman","rarity":"EPIC","mp":12,"family":"GLOSSY_MINERAL_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FRESHLY_BAKED_HEIRLOOM","name":"Freshly Baked Heirloom","rarity":"LEGENDARY","mp":16,"family":"FRESHLY_BAKED_HEIRLOOM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GRATITUDE_ARTIFACT","name":"Gratitude Artifact","rarity":"RARE","mp":8,"family":"GRATITUDE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FRESHLY_BAKED_ARTIFACT","name":"Freshly Baked Artifact","rarity":"RARE","mp":8,"family":"FRESHLY_BAKED_HEIRLOOM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FRESHLY_BAKED_RELIC","name":"Freshly Baked Relic","rarity":"EPIC","mp":12,"family":"FRESHLY_BAKED_HEIRLOOM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GRATITUDE_TALISMAN","name":"Gratitude Talisman","rarity":"COMMON","mp":3,"family":"GRATITUDE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FRESHLY_BAKED_RING","name":"Freshly Baked Ring","rarity":"UNCOMMON","mp":5,"family":"FRESHLY_BAKED_HEIRLOOM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GRATITUDE_RING","name":"Gratitude Ring","rarity":"UNCOMMON","mp":5,"family":"GRATITUDE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FRESHLY_BAKED_TALISMAN","name":"Freshly Baked Talisman","rarity":"COMMON","mp":3,"family":"FRESHLY_BAKED_HEIRLOOM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SCAVENGER_ARTIFACT","name":"Scavenger Artifact","rarity":"RARE","mp":8,"family":"SCAVENGER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SCAVENGER_RING","name":"Scavenger Ring","rarity":"UNCOMMON","mp":5,"family":"SCAVENGER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ANGUISH_RING","name":"Anguish Ring","rarity":"EPIC","mp":12,"family":"ANGUISH_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BEASTMASTER_CREST_COMMON","name":"Beastmaster Crest","rarity":"COMMON","mp":3,"family":"BEASTMASTER_CREST_LEGENDARY","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BEASTMASTER_CREST_LEGENDARY","name":"Beastmaster Crest","rarity":"LEGENDARY","mp":16,"family":"BEASTMASTER_CREST_LEGENDARY","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BEASTMASTER_CREST_EPIC","name":"Beastmaster Crest","rarity":"EPIC","mp":12,"family":"BEASTMASTER_CREST_LEGENDARY","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BEASTMASTER_CREST_UNCOMMON","name":"Beastmaster Crest","rarity":"UNCOMMON","mp":5,"family":"BEASTMASTER_CREST_LEGENDARY","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ANGUISH_ARTIFACT","name":"Anguish Artifact","rarity":"LEGENDARY","mp":16,"family":"ANGUISH_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BEASTMASTER_CREST_RARE","name":"Beastmaster Crest","rarity":"RARE","mp":8,"family":"BEASTMASTER_CREST_LEGENDARY","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ANGUISH_TALISMAN","name":"Anguish Talisman","rarity":"RARE","mp":8,"family":"ANGUISH_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PESTHUNTER_RELIC","name":"Pesthunter Relic","rarity":"LEGENDARY","mp":16,"family":"PESTHUNTER_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"JERRY_TALISMAN_BLUE","name":"Blue Jerry Talisman","rarity":"RARE","mp":8,"family":"JERRY_TALISMAN_GOLDEN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"JERRY_TALISMAN_GREEN","name":"Green Jerry Talisman","rarity":"UNCOMMON","mp":5,"family":"JERRY_TALISMAN_GOLDEN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"JERRY_TALISMAN_GOLDEN","name":"Golden Jerry Artifact","rarity":"LEGENDARY","mp":16,"family":"JERRY_TALISMAN_GOLDEN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"JERRY_TALISMAN_PURPLE","name":"Purple Jerry Talisman","rarity":"EPIC","mp":12,"family":"JERRY_TALISMAN_GOLDEN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HEGEMONY_ARTIFACT","name":"Hegemony Artifact","rarity":"LEGENDARY","mp":16,"family":"HEGEMONY_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true,"dynamic":"double"},{"id":"DULL_SHARK_TOOTH_NECKLACE","name":"Dull Shark Tooth Necklace","rarity":"UNCOMMON","mp":5,"family":"RAZOR_SHARP_SHARK_TOOTH_NECKLACE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RAGGEDY_SHARK_TOOTH_NECKLACE","name":"Raggedy Shark Tooth Necklace","rarity":"COMMON","mp":3,"family":"RAZOR_SHARP_SHARK_TOOTH_NECKLACE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HONED_SHARK_TOOTH_NECKLACE","name":"Honed Shark Tooth Necklace","rarity":"RARE","mp":8,"family":"RAZOR_SHARP_SHARK_TOOTH_NECKLACE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SHARP_SHARK_TOOTH_NECKLACE","name":"Sharp Shark Tooth Necklace","rarity":"EPIC","mp":12,"family":"RAZOR_SHARP_SHARK_TOOTH_NECKLACE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RAZOR_SHARP_SHARK_TOOTH_NECKLACE","name":"Razor-sharp Shark Tooth Necklace","rarity":"LEGENDARY","mp":16,"family":"RAZOR_SHARP_SHARK_TOOTH_NECKLACE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BINGO_RELIC","name":"Bingo Relic","rarity":"EPIC","mp":12,"family":"BINGO_HEIRLOOM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BINGO_HEIRLOOM","name":"Bingo Heirloom","rarity":"LEGENDARY","mp":16,"family":"BINGO_HEIRLOOM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BINGO_TALISMAN","name":"Bingo Talisman","rarity":"COMMON","mp":3,"family":"BINGO_HEIRLOOM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BINGO_RING","name":"Bingo Ring","rarity":"UNCOMMON","mp":5,"family":"BINGO_HEIRLOOM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BINGO_ARTIFACT","name":"Bingo Artifact","rarity":"RARE","mp":8,"family":"BINGO_HEIRLOOM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BUCKET_OF_DYE","name":"Bucket of Dye","rarity":"RARE","mp":8,"family":"BUCKET_OF_DYE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SEA_CREATURE_TALISMAN","name":"Sea Creature Talisman","rarity":"COMMON","mp":3,"family":"SEA_CREATURE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"INTIMIDATION_ARTIFACT","name":"Intimidation Artifact","rarity":"RARE","mp":8,"family":"INTIMIDATION_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ODGERS_BRONZE_TOOTH","name":"Odger's Bronze Tooth","rarity":"COMMON","mp":3,"family":"ODGERS_DIAMOND_TOOTH","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"LUCK_TALISMAN","name":"Luck Talisman","rarity":"UNCOMMON","mp":5,"family":"LUCK_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SCARF_THESIS","name":"Scarf's Thesis","rarity":"EPIC","mp":12,"family":"SCARF_GRIMOIRE","tradeable":true,"soulbound":null,"rift":true,"dungeon":true,"recombable":true},{"id":"POWER_ARTIFACT","name":"Artifact of Power","rarity":"RARE","mp":8,"family":"POWER_RELIC","tradeable":false,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BAT_PERSON_ARTIFACT","name":"Bat Person Artifact","rarity":"RARE","mp":8,"family":"BAT_PERSON_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WOLF_PAW","name":"Wolf Paw","rarity":"UNCOMMON","mp":5,"family":"WOLF_PAW","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"FEATHER_ARTIFACT","name":"Feather Artifact","rarity":"RARE","mp":8,"family":"FEATHER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"NIGHT_VISION_CHARM","name":"Night Vision Charm","rarity":"COMMON","mp":3,"family":"NIGHT_VISION_CHARM","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PERSONAL_DELETOR_4000","name":"Personal Deletor 4000","rarity":"UNCOMMON","mp":5,"family":"PERSONAL_DELETOR_7000","tradeable":false,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TALISMAN_OF_SPACE","name":"Talisman of Space","rarity":"UNCOMMON","mp":5,"family":"ARTIFACT_OF_SPACE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"LAVA_TALISMAN","name":"Lava Talisman","rarity":"UNCOMMON","mp":5,"family":"LAVA_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"COIN_TALISMAN","name":"Talisman of Coins","rarity":"COMMON","mp":3,"family":"RELIC_OF_COINS","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MASTER_SKULL_TIER_4","name":"Master Skull - Tier 4","rarity":"UNCOMMON","mp":5,"family":"MASTER_SKULL_TIER_10","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"INTIMIDATION_RING","name":"Intimidation Ring","rarity":"UNCOMMON","mp":5,"family":"INTIMIDATION_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HEALING_RING","name":"Healing Ring","rarity":"UNCOMMON","mp":5,"family":"HEALING_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BAT_ARTIFACT","name":"Bat Artifact","rarity":"LEGENDARY","mp":16,"family":"BAT_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"EMERALD_ARTIFACT","name":"Emerald Artifact","rarity":"RARE","mp":8,"family":"EMERALD_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SEAL_RING","name":"Seal Ring","rarity":"RARE","mp":8,"family":"SEAL_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ARTIFACT_OF_COINS","name":"Artifact of Coins","rarity":"RARE","mp":8,"family":"RELIC_OF_COINS","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"NEW_YEAR_CAKE_BAG","name":"New Year Cake Bag","rarity":"UNCOMMON","mp":5,"family":"NEW_YEAR_CAKE_BAG","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RING_OF_COINS","name":"Ring of Coins","rarity":"UNCOMMON","mp":5,"family":"RELIC_OF_COINS","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FIRE_TALISMAN","name":"Fire Talisman","rarity":"COMMON","mp":3,"family":"FIRE_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ODGERS_GOLD_TOOTH","name":"Odger's Gold Tooth","rarity":"RARE","mp":8,"family":"ODGERS_DIAMOND_TOOTH","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"TITANIUM_RELIC","name":"Titanium Relic","rarity":"LEGENDARY","mp":16,"family":"TITANIUM_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TITANIUM_ARTIFACT","name":"Titanium Artifact","rarity":"EPIC","mp":12,"family":"TITANIUM_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WOOD_TALISMAN","name":"Wood Affinity Talisman","rarity":"UNCOMMON","mp":5,"family":"WOOD_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CRACKED_PIGGY_BANK","name":"Cracked Piggy Bank","rarity":"UNCOMMON","mp":5,"family":"CRACKED_PIGGY_BANK","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TITANIUM_RING","name":"Titanium Ring","rarity":"RARE","mp":8,"family":"TITANIUM_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"VACCINE_RING","name":"Vaccine Ring","rarity":"UNCOMMON","mp":5,"family":"VACCINE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SEA_CREATURE_RING","name":"Sea Creature Ring","rarity":"UNCOMMON","mp":5,"family":"SEA_CREATURE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SHADY_RING","name":"Shady Ring","rarity":"UNCOMMON","mp":5,"family":"SEAL_OF_THE_FAMILY","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"FEATHER_TALISMAN","name":"Feather Talisman","rarity":"COMMON","mp":3,"family":"FEATHER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PERSONAL_COMPACTOR_6000","name":"Personal Compactor 6000","rarity":"EPIC","mp":12,"family":"PERSONAL_COMPACTOR_7000","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TITANIUM_TALISMAN","name":"Titanium Talisman","rarity":"UNCOMMON","mp":5,"family":"TITANIUM_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HASTE_RING","name":"Haste Ring","rarity":"RARE","mp":8,"family":"HASTE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CHEETAH_TALISMAN","name":"Cheetah Talisman","rarity":"EPIC","mp":12,"family":"CHEETAH_TALISMAN","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"FARMER_ORB","name":"Farmer Orb","rarity":"COMMON","mp":3,"family":"FARMER_ORB","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RING_OF_SPACE","name":"Ring of Space","rarity":"RARE","mp":8,"family":"ARTIFACT_OF_SPACE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ODGERS_DIAMOND_TOOTH","name":"Odger's Diamond Tooth","rarity":"EPIC","mp":12,"family":"ODGERS_DIAMOND_TOOTH","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"PERSONAL_COMPACTOR_4000","name":"Personal Compactor 4000","rarity":"UNCOMMON","mp":5,"family":"PERSONAL_COMPACTOR_7000","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CANDY_RELIC","name":"Candy Relic","rarity":"LEGENDARY","mp":16,"family":"CANDY_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"LUCKY_HOOF","name":"Lucky Hoof","rarity":"UNCOMMON","mp":5,"family":"ETERNAL_HOOF","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GRAVITY_TALISMAN","name":"Gravity Talisman","rarity":"UNCOMMON","mp":5,"family":"GRAVITY_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BAIT_RING","name":"Bait Ring","rarity":"RARE","mp":8,"family":"SPIKED_ATROCITY","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"JACOBUS_REGISTER","name":"Jacobus Register","rarity":"LEGENDARY","mp":16,"family":"JACOBUS_REGISTER","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"MASTER_SKULL_TIER_1","name":"Master Skull - Tier 1","rarity":"COMMON","mp":3,"family":"MASTER_SKULL_TIER_10","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"MASTER_SKULL_TIER_5","name":"Master Skull - Tier 5","rarity":"RARE","mp":8,"family":"MASTER_SKULL_TIER_10","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"POTATO_RING","name":"Potato Ring","rarity":"UNCOMMON","mp":5,"family":"POTATO_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PERSONAL_DELETOR_7000","name":"Personal Deletor 7000","rarity":"LEGENDARY","mp":16,"family":"PERSONAL_DELETOR_7000","tradeable":false,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CATACOMBS_EXPERT_RING","name":"Catacombs Expert Ring","rarity":"EPIC","mp":12,"family":"CATACOMBS_EXPERT_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"SCARF_STUDIES","name":"Scarf's Studies","rarity":"RARE","mp":8,"family":"SCARF_GRIMOIRE","tradeable":true,"soulbound":null,"rift":true,"dungeon":true,"recombable":true},{"id":"BAT_PERSON_RING","name":"Bat Person Ring","rarity":"UNCOMMON","mp":5,"family":"BAT_PERSON_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SPIKED_ATROCITY","name":"Spiked Atrocity","rarity":"EPIC","mp":12,"family":"SPIKED_ATROCITY","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PIGS_FOOT","name":"Pig's Foot","rarity":"RARE","mp":8,"family":"PIGS_FOOT","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"MASTER_SKULL_TIER_10","name":"Master Skull - Tier 10","rarity":"LEGENDARY","mp":16,"family":"MASTER_SKULL_TIER_10","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"SPEED_RING","name":"Speed Ring","rarity":"UNCOMMON","mp":5,"family":"SPEED_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HASTE_ARTIFACT","name":"Haste Artifact","rarity":"EPIC","mp":12,"family":"HASTE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"DAY_CRYSTAL","name":"Day Crystal","rarity":"RARE","mp":8,"family":"SUNSHINE_CRYSTAL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SAFETY_BADGE","name":"Safety Badge","rarity":"COMMON","mp":3,"family":"SAFETY_BADGE","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":false},{"id":"WITHER_ARTIFACT","name":"Wither Artifact","rarity":"EPIC","mp":12,"family":"WITHER_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SEAL_OF_THE_FAMILY","name":"Seal of the Family","rarity":"EPIC","mp":12,"family":"SEAL_OF_THE_FAMILY","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SPEED_ARTIFACT","name":"Speed Artifact","rarity":"RARE","mp":8,"family":"SPEED_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WITHER_RELIC","name":"Wither Relic","rarity":"LEGENDARY","mp":16,"family":"WITHER_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"AUTO_RECOMBOBULATOR","name":"Auto Recombobulator","rarity":"LEGENDARY","mp":16,"family":"AUTO_RECOMBOBULATOR","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"COMPASS_TALISMAN","name":"Compass Talisman","rarity":"COMMON","mp":3,"family":"COMPASS_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FIERY_KUUDRA_CORE","name":"Fiery Kuudra Core","rarity":"EPIC","mp":12,"family":"INFERNAL_KUUDRA_CORE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"VILLAGE_TALISMAN","name":"Village Affinity Talisman","rarity":"COMMON","mp":3,"family":"VILLAGE_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ARTIFACT_POTION_AFFINITY","name":"Potion Affinity Artifact","rarity":"RARE","mp":8,"family":"ARTIFACT_POTION_AFFINITY","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"VACCINE_ARTIFACT","name":"Vaccine Artifact","rarity":"RARE","mp":8,"family":"VACCINE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PERSONAL_DELETOR_6000","name":"Personal Deletor 6000","rarity":"EPIC","mp":12,"family":"PERSONAL_DELETOR_7000","tradeable":false,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MASTER_SKULL_TIER_7","name":"Master Skull - Tier 7","rarity":"LEGENDARY","mp":16,"family":"MASTER_SKULL_TIER_10","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"MINE_TALISMAN","name":"Mine Affinity Talisman","rarity":"COMMON","mp":3,"family":"MINE_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TREASURE_RING","name":"Treasure Ring","rarity":"EPIC","mp":12,"family":"TREASURE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"WOLF_TALISMAN","name":"Wolf Talisman","rarity":"UNCOMMON","mp":5,"family":"WOLF_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"DANTE_TALISMAN","name":"Dante's Talisman","rarity":"COMMON","mp":3,"family":"DANTE_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BURNING_KUUDRA_CORE","name":"Burning Kuudra Core","rarity":"RARE","mp":8,"family":"INFERNAL_KUUDRA_CORE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MASTER_SKULL_TIER_8","name":"Master Skull - Tier 8","rarity":"EPIC","mp":12,"family":"MASTER_SKULL_TIER_10","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"ARTIFACT_OF_SPACE","name":"Artifact of Space","rarity":"EPIC","mp":12,"family":"ARTIFACT_OF_SPACE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"DANTE_RING","name":"Dante's Ring","rarity":"COMMON","mp":3,"family":"DANTE_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"EMERALD_RING","name":"Emerald Ring","rarity":"UNCOMMON","mp":5,"family":"EMERALD_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"NETHER_ARTIFACT","name":"Nether Artifact","rarity":"EPIC","mp":12,"family":"NETHER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PIGGY_BANK","name":"Piggy Bank","rarity":"UNCOMMON","mp":5,"family":"CRACKED_PIGGY_BANK","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"POTATO_TALISMAN","name":"Potato Talisman","rarity":"COMMON","mp":3,"family":"POTATO_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BLOOD_GOD_SIGIL","name":"Blood God Sigil","rarity":"UNCOMMON","mp":5,"family":"BLOOD_GOD_SIGIL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PERSONAL_DELETOR_5000","name":"Personal Deletor 5000","rarity":"RARE","mp":8,"family":"PERSONAL_DELETOR_7000","tradeable":false,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"KUUDRA_FOLLOWER_RELIC","name":"Kuudra Follower Relic","rarity":"LEGENDARY","mp":16,"family":"KUUDRA_FOLLOWER_RELIC","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SPEED_RELIC","name":"Speed Relic","rarity":"EPIC","mp":12,"family":"SPEED_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"NIGHT_CRYSTAL","name":"Night Crystal","rarity":"RARE","mp":8,"family":"MOONLIGHT_CRYSTAL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SHENS_REGALIA","name":"Shen's Regalia","rarity":"LEGENDARY","mp":16,"family":"SHENS_REGALIA","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ETERNAL_HOOF","name":"Eternal Hoof","rarity":"RARE","mp":8,"family":"ETERNAL_HOOF","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SPEED_TALISMAN","name":"Speed Talisman","rarity":"COMMON","mp":3,"family":"SPEED_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SCAVENGER_TALISMAN","name":"Scavenger Talisman","rarity":"COMMON","mp":3,"family":"SCAVENGER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"INTIMIDATION_RELIC","name":"Intimidation Relic","rarity":"EPIC","mp":12,"family":"INTIMIDATION_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HEALING_TALISMAN","name":"Healing Talisman","rarity":"COMMON","mp":3,"family":"HEALING_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BAT_TALISMAN","name":"Bat Talisman","rarity":"RARE","mp":8,"family":"BAT_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MAGNETIC_TALISMAN","name":"Magnetic Talisman","rarity":"UNCOMMON","mp":5,"family":"MAGNETIC_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GRIZZLY_PAW","name":"Grizzly Paw","rarity":"RARE","mp":8,"family":"GRIZZLY_PAW","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ODGERS_SILVER_TOOTH","name":"Odger's Silver Tooth","rarity":"UNCOMMON","mp":5,"family":"ODGERS_DIAMOND_TOOTH","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"POTION_AFFINITY_TALISMAN","name":"Potion Affinity Talisman","rarity":"COMMON","mp":3,"family":"ARTIFACT_POTION_AFFINITY","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WOLF_RING","name":"Wolf Ring","rarity":"RARE","mp":8,"family":"WOLF_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MASTER_SKULL_TIER_2","name":"Master Skull - Tier 2","rarity":"COMMON","mp":3,"family":"MASTER_SKULL_TIER_10","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"RELIC_OF_COINS","name":"Relic of Coins","rarity":"EPIC","mp":12,"family":"RELIC_OF_COINS","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"INTIMIDATION_TALISMAN","name":"Intimidation Talisman","rarity":"COMMON","mp":3,"family":"INTIMIDATION_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PANDORAS_BOX","name":"Pandora's Box","rarity":"COMMON","mp":3,"family":"PANDORAS_BOX","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":false},{"id":"SCARF_GRIMOIRE","name":"Scarf's Grimoire","rarity":"LEGENDARY","mp":16,"family":"SCARF_GRIMOIRE","tradeable":true,"soulbound":null,"rift":true,"dungeon":true,"recombable":true},{"id":"LYNX_TALISMAN","name":"Lynx Talisman","rarity":"RARE","mp":8,"family":"CHEETAH_TALISMAN","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"BAT_PERSON_TALISMAN","name":"Bat Person Talisman","rarity":"COMMON","mp":3,"family":"BAT_PERSON_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CANDY_ARTIFACT","name":"Candy Artifact","rarity":"EPIC","mp":12,"family":"CANDY_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TREASURE_TALISMAN","name":"Treasure Talisman","rarity":"RARE","mp":8,"family":"TREASURE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"ARTIFACT_OF_CONTROL","name":"Artifact of Control","rarity":"LEGENDARY","mp":16,"family":"ARTIFACT_OF_CONTROL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CARNIVAL_MASK_BAG","name":"Carnival Mask Bag","rarity":"COMMON","mp":3,"family":"CARNIVAL_MASK_BAG","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BROKEN_PIGGY_BANK","name":"Broken Piggy Bank","rarity":"UNCOMMON","mp":5,"family":"CRACKED_PIGGY_BANK","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CANDY_RING","name":"Candy Ring","rarity":"RARE","mp":8,"family":"CANDY_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CROOKED_ARTIFACT","name":"Crooked Artifact","rarity":"RARE","mp":8,"family":"SEAL_OF_THE_FAMILY","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"KING_TALISMAN","name":"King Talisman","rarity":"COMMON","mp":3,"family":"KING_TALISMAN","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"PERSONAL_COMPACTOR_7000","name":"Personal Compactor 7000","rarity":"LEGENDARY","mp":16,"family":"PERSONAL_COMPACTOR_7000","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FEATHER_RING","name":"Feather Ring","rarity":"UNCOMMON","mp":5,"family":"FEATHER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PERSONAL_COMPACTOR_5000","name":"Personal Compactor 5000","rarity":"RARE","mp":8,"family":"PERSONAL_COMPACTOR_7000","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MASTER_SKULL_TIER_3","name":"Master Skull - Tier 3","rarity":"UNCOMMON","mp":5,"family":"MASTER_SKULL_TIER_10","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"SPIDER_TALISMAN","name":"Spider Talisman","rarity":"UNCOMMON","mp":5,"family":"SPIDER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BAT_RING","name":"Bat Ring","rarity":"EPIC","mp":12,"family":"BAT_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"VACCINE_TALISMAN","name":"Vaccine Talisman","rarity":"COMMON","mp":3,"family":"VACCINE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ETERNAL_CRYSTAL","name":"Eternal Crystal","rarity":"EPIC","mp":12,"family":"ETERNAL_CRYSTAL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FARMING_TALISMAN","name":"Farming Talisman","rarity":"UNCOMMON","mp":5,"family":"FARMING_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SKELETON_TALISMAN","name":"Skeleton Talisman","rarity":"COMMON","mp":3,"family":"SKELETON_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MASTER_SKULL_TIER_6","name":"Master Skull - Tier 6","rarity":"EPIC","mp":12,"family":"MASTER_SKULL_TIER_10","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"SEA_CREATURE_ARTIFACT","name":"Sea Creature Artifact","rarity":"RARE","mp":8,"family":"SEA_CREATURE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MASTER_SKULL_TIER_9","name":"Master Skull - Tier 9","rarity":"LEGENDARY","mp":16,"family":"MASTER_SKULL_TIER_10","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"RING_POTION_AFFINITY","name":"Potion Affinity Ring","rarity":"UNCOMMON","mp":5,"family":"ARTIFACT_POTION_AFFINITY","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"INFERNAL_KUUDRA_CORE","name":"Infernal Kuudra Core","rarity":"LEGENDARY","mp":16,"family":"INFERNAL_KUUDRA_CORE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"JUNGLE_AMULET","name":"Jungle Amulet","rarity":"UNCOMMON","mp":5,"family":"JUNGLE_AMULET","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CAT_TALISMAN","name":"Cat Talisman","rarity":"UNCOMMON","mp":5,"family":"CHEETAH_TALISMAN","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"POWER_TALISMAN","name":"Talisman of Power","rarity":"COMMON","mp":3,"family":"POWER_RELIC","tradeable":false,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"POWER_RING","name":"Ring of Power","rarity":"UNCOMMON","mp":5,"family":"POWER_RELIC","tradeable":false,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ZOMBIE_TALISMAN","name":"Zombie Talisman","rarity":"COMMON","mp":3,"family":"ZOMBIE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SEAL_TALISMAN","name":"Seal Talisman","rarity":"UNCOMMON","mp":5,"family":"SEAL_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"OLD_BOOT","name":"Old Boot","rarity":"RARE","mp":8,"family":"OLD_BOOT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"EXPERIENCE_ARTIFACT","name":"Experience Artifact","rarity":"EPIC","mp":12,"family":"EXPERIENCE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CANDY_TALISMAN","name":"Candy Talisman","rarity":"UNCOMMON","mp":5,"family":"CANDY_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BLOOD_GOD_CREST","name":"Blood God Crest","rarity":"COMMON","mp":3,"family":"BLOOD_GOD_SIGIL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TREASURE_ARTIFACT","name":"Treasure Artifact","rarity":"LEGENDARY","mp":16,"family":"TREASURE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"BOOK_OF_PROGRESSION","name":"Book of Progression","rarity":"COMMON","mp":3,"family":"BOOK_OF_PROGRESSION","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":false},{"id":"BLAZE_TALISMAN","name":"Blaze Talisman","rarity":"RARE","mp":8,"family":"BLAZE_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BURSTSTOPPER_ARTIFACT","name":"Burststopper Artifact","rarity":"EPIC","mp":12,"family":"BURSTSTOPPER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BURSTSTOPPER_TALISMAN","name":"Burststopper Talisman","rarity":"RARE","mp":8,"family":"BURSTSTOPPER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SOULFLOW_SUPERCELL","name":"Soulflow Supercell","rarity":"EPIC","mp":12,"family":"SOULFLOW_SUPERCELL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ENDER_RELIC","name":"Ender Relic","rarity":"LEGENDARY","mp":16,"family":"ENDER_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HANDY_BLOOD_CHALICE","name":"Handy Blood Chalice","rarity":"COMMON","mp":3,"family":"HANDY_BLOOD_CHALICE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"POCKET_ESPRESSO_MACHINE","name":"Pocket Espresso Machine","rarity":"COMMON","mp":3,"family":"POCKET_ESPRESSO_MACHINE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SOULFLOW_PILE","name":"Soulflow Pile","rarity":"UNCOMMON","mp":5,"family":"SOULFLOW_SUPERCELL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SOULFLOW_BATTERY","name":"Soulflow Battery","rarity":"RARE","mp":8,"family":"SOULFLOW_SUPERCELL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TARANTULA_TALISMAN","name":"Tarantula Talisman","rarity":"EPIC","mp":12,"family":"TARANTULA_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SURVIVOR_CUBE","name":"Survivor Cube","rarity":"RARE","mp":8,"family":"SURVIVOR_CUBE","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SPIDER_ARTIFACT","name":"Spider Artifact","rarity":"EPIC","mp":12,"family":"SPIDER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SPIDER_RING","name":"Spider Ring","rarity":"RARE","mp":8,"family":"SPIDER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"REAPER_ORB","name":"Reaper Orb","rarity":"LEGENDARY","mp":16,"family":"REAPER_ORB","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ZOMBIE_RING","name":"Zombie Ring","rarity":"UNCOMMON","mp":5,"family":"ZOMBIE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ZOMBIE_ARTIFACT","name":"Zombie Artifact","rarity":"RARE","mp":8,"family":"ZOMBIE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"DEVOUR_RING","name":"Devour Ring","rarity":"RARE","mp":8,"family":"DEVOUR_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HUNTER_TALISMAN","name":"Hunter Talisman","rarity":"UNCOMMON","mp":5,"family":"HUNTER_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HUNTER_RING","name":"Hunter Ring","rarity":"RARE","mp":8,"family":"HUNTER_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RED_CLAW_RING","name":"Red Claw Ring","rarity":"RARE","mp":8,"family":"RED_CLAW_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RED_CLAW_ARTIFACT","name":"Red Claw Artifact","rarity":"EPIC","mp":12,"family":"RED_CLAW_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RED_CLAW_TALISMAN","name":"Red Claw Talisman","rarity":"UNCOMMON","mp":5,"family":"RED_CLAW_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"DWARVEN_METAL","name":"Dwarven Metal Talisman","rarity":"UNCOMMON","mp":5,"family":"DWARVEN_METAL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"POWER_RELIC","name":"Relic of Power","rarity":"EPIC","mp":12,"family":"POWER_RELIC","tradeable":false,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SQUASH_RING","name":"Squash Ring","rarity":"UNCOMMON","mp":5,"family":"HELIANTHUS_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CROPIE_TALISMAN","name":"Cropie Talisman","rarity":"COMMON","mp":3,"family":"HELIANTHUS_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BIOANALYSIS_RING","name":"Bioanalysis Ring","rarity":"UNCOMMON","mp":5,"family":"BIOANALYSIS_ARTIFACT","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"MOONLIGHT_CRYSTAL","name":"Moonlight Crystal","rarity":"EPIC","mp":12,"family":"MOONLIGHT_CRYSTAL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"COPPER_RING","name":"Copper Ring","rarity":"UNCOMMON","mp":5,"family":"COPPER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"COPPER_ARTIFACT","name":"Copper Artifact","rarity":"RARE","mp":8,"family":"COPPER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"COPPER_TALISMAN","name":"Copper Talisman","rarity":"COMMON","mp":3,"family":"COPPER_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BIOANALYSIS_TALISMAN","name":"Bioanalysis Talisman","rarity":"COMMON","mp":3,"family":"BIOANALYSIS_ARTIFACT","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"BIOANALYSIS_ARTIFACT","name":"Bioanalysis Artifact","rarity":"RARE","mp":8,"family":"BIOANALYSIS_ARTIFACT","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SUNSHINE_CRYSTAL","name":"Sunshine Crystal","rarity":"EPIC","mp":12,"family":"SUNSHINE_CRYSTAL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ATMOSPHERIC_FILTER","name":"Atmospheric Filter","rarity":"RARE","mp":8,"family":"ATMOSPHERIC_FILTER","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HELIANTHUS_RELIC","name":"Helianthus Relic","rarity":"EPIC","mp":12,"family":"HELIANTHUS_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"JAKE_PLUSHIE","name":"Jake's Plushie","rarity":"UNCOMMON","mp":5,"family":"JAKE_PLUSHIE","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"FERMENTO_ARTIFACT","name":"Fermento Artifact","rarity":"RARE","mp":8,"family":"HELIANTHUS_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"VOTER_BADGE_ELITE","name":"Elite Voter's Badge","rarity":"RARE","mp":8,"family":"VOTER_BADGE_SUPREME","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":false},{"id":"VOTER_BADGE","name":"Voter's Badge","rarity":"COMMON","mp":3,"family":"VOTER_BADGE_SUPREME","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":false},{"id":"VOTER_BADGE_SUPREME","name":"Supreme Voter's Badge","rarity":"EPIC","mp":12,"family":"VOTER_BADGE_SUPREME","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":false},{"id":"VOTER_BADGE_VIP","name":"VIP Voter's Badge","rarity":"UNCOMMON","mp":5,"family":"VOTER_BADGE_SUPREME","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":false},{"id":"BLUE_GIFT_TALISMAN","name":"Blue Gift Talisman","rarity":"RARE","mp":8,"family":"GOLD_GIFT_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PURPLE_GIFT_TALISMAN","name":"Purple Gift Talisman","rarity":"EPIC","mp":12,"family":"GOLD_GIFT_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GOLD_GIFT_TALISMAN","name":"Gold Gift Talisman","rarity":"LEGENDARY","mp":16,"family":"GOLD_GIFT_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WHITE_GIFT_TALISMAN","name":"White Gift Talisman","rarity":"COMMON","mp":3,"family":"GOLD_GIFT_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GREEN_GIFT_TALISMAN","name":"Green Gift Talisman","rarity":"UNCOMMON","mp":5,"family":"GOLD_GIFT_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GLACIAL_RING","name":"Glacial Ring","rarity":"UNCOMMON","mp":5,"family":"GLACIAL_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GLACIAL_ARTIFACT","name":"Glacial Artifact","rarity":"RARE","mp":8,"family":"GLACIAL_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GLACIAL_TALISMAN","name":"Glacial Talisman","rarity":"COMMON","mp":3,"family":"GLACIAL_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"LUMBERJACK_RING","name":"Lumberjack Ring","rarity":"UNCOMMON","mp":5,"family":"LUMBERJACK_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"LUMBERJACK_TALISMAN","name":"Lumberjack Talisman","rarity":"COMMON","mp":3,"family":"LUMBERJACK_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"LUMBERJACK_ARTIFACT","name":"Lumberjack Artifact","rarity":"RARE","mp":8,"family":"LUMBERJACK_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ACCRETION_RING","name":"Accretion Ring","rarity":"UNCOMMON","mp":5,"family":"ACCRETION_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ACCRETION_TALISMAN","name":"Accretion Talisman","rarity":"COMMON","mp":3,"family":"ACCRETION_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ACCRETION_ARTIFACT","name":"Accretion Artifact","rarity":"RARE","mp":8,"family":"ACCRETION_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HONEYCOMB_TALISMAN","name":"Honeycomb Talisman","rarity":"COMMON","mp":3,"family":"HONEYCOMB_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HONEYCOMB_ARTIFACT","name":"Honeycomb Artifact","rarity":"RARE","mp":8,"family":"HONEYCOMB_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HONEYCOMB_RING","name":"Honeycomb Ring","rarity":"UNCOMMON","mp":5,"family":"HONEYCOMB_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TORRHUS_TALISMAN","name":"Torrhus Talisman","rarity":"COMMON","mp":3,"family":"TORRHUS_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TORRHUS_RING","name":"Torrhus Ring","rarity":"UNCOMMON","mp":5,"family":"TORRHUS_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TORRHUS_ARTIFACT","name":"Torrhus Artifact","rarity":"RARE","mp":8,"family":"TORRHUS_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"FUTURE_CALORIES","name":"Future Calories Talisman","rarity":"COMMON","mp":3,"family":"FUTURE_CALORIES","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"RIFT_PRISM","name":"Rift Prism","rarity":"RARE","mp":11,"family":"RIFT_PRISM","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":false},{"id":"PUNCHCARD_ARTIFACT","name":"Punchcard Artifact","rarity":"EPIC","mp":12,"family":"PUNCHCARD_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WARDING_TRINKET","name":"Warding Trinket","rarity":"EPIC","mp":12,"family":"WARDING_TRINKET","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HARMONIOUS_SURGERY_TOOLKIT","name":"Harmonious Surgery Toolkit","rarity":"UNCOMMON","mp":5,"family":"HARMONIOUS_SURGERY_TOOLKIT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CRUX_TALISMAN_7","name":"Celestial Starstone","rarity":"SUPREME","mp":0,"family":"CRUX_TALISMAN_6","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":false},{"id":"CRUX_TALISMAN_4","name":"Crux Relic","rarity":"EPIC","mp":12,"family":"CRUX_TALISMAN_6","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CRUX_TALISMAN_3","name":"Crux Artifact","rarity":"RARE","mp":8,"family":"CRUX_TALISMAN_6","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CRUX_TALISMAN_2","name":"Crux Ring","rarity":"UNCOMMON","mp":5,"family":"CRUX_TALISMAN_6","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CRUX_TALISMAN_5","name":"Crux Heirloom","rarity":"LEGENDARY","mp":16,"family":"CRUX_TALISMAN_6","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CRUX_TALISMAN_1","name":"Crux Talisman","rarity":"COMMON","mp":3,"family":"CRUX_TALISMAN_6","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CRUX_TALISMAN_6","name":"Crux Chronomicon","rarity":"MYTHIC","mp":22,"family":"CRUX_TALISMAN_6","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":false},{"id":"IQ_POINT","name":"IQ Point","rarity":"COMMON","mp":3,"family":"IQ_POINT","tradeable":false,"soulbound":"SOLO","rift":true,"dungeon":false,"recombable":true},{"id":"RING_OF_BROKEN_LOVE","name":"Ring of Broken Love","rarity":"LEGENDARY","mp":16,"family":"RING_OF_BROKEN_LOVE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RING_OF_ETERNAL_LOVE","name":"Ring of Eternal Love","rarity":"LEGENDARY","mp":16,"family":"RING_OF_ETERNAL_LOVE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TWO_IQ_POINT","name":"2 IQ Points","rarity":"UNCOMMON","mp":5,"family":"TWO_IQ_POINT","tradeable":false,"soulbound":"SOLO","rift":true,"dungeon":false,"recombable":true},{"id":"ARGOFAY_TRINKET","name":"Argofay Trinket","rarity":"EPIC","mp":12,"family":"ARGOFAY_TRINKET","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"DEFECTIVE_MONITOR","name":"Defective Monitor","rarity":"EPIC","mp":12,"family":"DEFECTIVE_MONITOR","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BLUERTOOTH_RING","name":"Bluertooth Ring","rarity":"EPIC","mp":12,"family":"BLUERTOOTH_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"BLUETOOTH_RING","name":"Bluetooth Ring","rarity":"RARE","mp":8,"family":"BLUERTOOTH_RING","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"LUSH_RING","name":"Lush Ring","rarity":"RARE","mp":8,"family":"LUSH_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"LUSH_ARTIFACT","name":"Lush Artifact","rarity":"EPIC","mp":12,"family":"LUSH_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"LUSH_TALISMAN","name":"Lush Talisman","rarity":"UNCOMMON","mp":5,"family":"LUSH_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"AGARIMOO_TALISMAN","name":"Agarimoo Talisman","rarity":"COMMON","mp":3,"family":"AGARIMOO_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"AGARIMOO_RING","name":"Agarimoo Ring","rarity":"UNCOMMON","mp":5,"family":"AGARIMOO_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"AGARIMOO_ARTIFACT","name":"Agarimoo Artifact","rarity":"RARE","mp":8,"family":"AGARIMOO_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"HOCUS_POCUS_CIPHER","name":"Hocus-Pocus Cipher","rarity":"EPIC","mp":12,"family":"HOCUS_POCUS_CIPHER","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"SATELITE","name":"Satelite","rarity":"LEGENDARY","mp":16,"family":"SATELITE","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"COMBO_MANIA_TALISMAN","name":"Combo Mania","rarity":"UNCOMMON","mp":5,"family":"COMBO_MANIA_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TINY_DANCER","name":"Tiny Dancer","rarity":"UNCOMMON","mp":5,"family":"TINY_DANCER","tradeable":false,"soulbound":"SOLO","rift":true,"dungeon":false,"recombable":true},{"id":"TEST_BUCKET_PLEASE_IGNORE","name":"Test Bucket Please Ignore","rarity":"UNCOMMON","mp":5,"family":"TEST_BUCKET_PLEASE_IGNORE","tradeable":false,"soulbound":"SOLO","rift":true,"dungeon":false,"recombable":true},{"id":"BIG_BRAIN_TALISMAN","name":"Big Brain Talisman","rarity":"COMMON","mp":3,"family":"BIG_BRAIN_TALISMAN","tradeable":false,"soulbound":"SOLO","rift":true,"dungeon":false,"recombable":true},{"id":"MINIATURIZED_TUBULATOR","name":"Miniaturized Tubulator","rarity":"UNCOMMON","mp":5,"family":"MINIATURIZED_TUBULATOR","tradeable":false,"soulbound":"SOLO","rift":true,"dungeon":false,"recombable":true},{"id":"GARLIC_FLAVORED_GUMMY_BEAR","name":"Perma-Jelled Garlic-Flavored Re-Heated Gummy Polar Bear","rarity":"EPIC","mp":12,"family":"GARLIC_FLAVORED_GUMMY_BEAR","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"BLOOD_DONOR_RING","name":"Blood Donor Ring","rarity":"UNCOMMON","mp":5,"family":"BLOOD_DONOR_ARTIFACT","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"BLOOD_DONOR_ARTIFACT","name":"Blood Donor Artifact","rarity":"RARE","mp":8,"family":"BLOOD_DONOR_ARTIFACT","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"BLOOD_DONOR_TALISMAN","name":"Blood Donor Talisman","rarity":"COMMON","mp":3,"family":"BLOOD_DONOR_ARTIFACT","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"VAMPIRE_DENTIST_RELIC","name":"Vampire Dentist Relic","rarity":"LEGENDARY","mp":16,"family":"VAMPIRE_DENTIST_RELIC","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"ORGAN_DONOR_TALISMAN","name":"Organ Donor Talisman","rarity":"COMMON","mp":3,"family":"ORGAN_DONOR_ARTIFACT","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"ORGAN_DONOR_RING","name":"Organ Donor Ring","rarity":"UNCOMMON","mp":5,"family":"ORGAN_DONOR_ARTIFACT","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"ORGAN_DONOR_ARTIFACT","name":"Organ Donor Artifact","rarity":"RARE","mp":8,"family":"ORGAN_DONOR_ARTIFACT","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"DRACONIC_ARTIFACT","name":"Draconic Artifact","rarity":"EPIC","mp":12,"family":"DRACONIC_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"DRACONIC_RING","name":"Draconic Ring","rarity":"RARE","mp":8,"family":"DRACONIC_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"ENDER_ARTIFACT","name":"Ender Artifact","rarity":"EPIC","mp":12,"family":"ENDER_RELIC","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"DRACONIC_TALISMAN","name":"Draconic Talisman","rarity":"UNCOMMON","mp":5,"family":"DRACONIC_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RESPIRATION_ARTIFACT","name":"Respiration Artifact","rarity":"RARE","mp":8,"family":"RESPIRATION_ARTIFACT","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"RESPIRATION_RING","name":"Respiration Ring","rarity":"UNCOMMON","mp":5,"family":"RESPIRATION_ARTIFACT","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"RESPIRATION_TALISMAN","name":"Respiration Talisman","rarity":"COMMON","mp":3,"family":"RESPIRATION_ARTIFACT","tradeable":true,"soulbound":null,"rift":true,"dungeon":false,"recombable":true},{"id":"MOONGLADE_ARTIFACT","name":"Moonglade Artifact","rarity":"RARE","mp":8,"family":"MOONGLADE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MOONGLADE_TALISMAN","name":"Moonglade Talisman","rarity":"COMMON","mp":3,"family":"MOONGLADE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MOONGLADE_RING","name":"Moonglade Ring","rarity":"UNCOMMON","mp":5,"family":"MOONGLADE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"EMPEROR_ARTIFACT","name":"Emperor's Artifact","rarity":"EPIC","mp":12,"family":"EMPEROR_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"EMPEROR_RING","name":"Emperor's Ring","rarity":"RARE","mp":8,"family":"EMPEROR_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"EMPEROR_TALISMAN","name":"Emperor's Talisman","rarity":"UNCOMMON","mp":5,"family":"EMPEROR_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PRESSURE_ARTIFACT","name":"Pressure Artifact","rarity":"RARE","mp":8,"family":"PRESSURE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PRESSURE_TALISMAN","name":"Pressure Talisman","rarity":"COMMON","mp":3,"family":"PRESSURE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"PRESSURE_RING","name":"Pressure Ring","rarity":"UNCOMMON","mp":5,"family":"PRESSURE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RUNEBLADE_RING","name":"Runeblade Ring","rarity":"UNCOMMON","mp":5,"family":"RUNEBLADE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RUNEBLADE_TALISMAN","name":"Runeblade Talisman","rarity":"COMMON","mp":3,"family":"RUNEBLADE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"RUNEBLADE_ARTIFACT","name":"Runeblade Artifact","rarity":"RARE","mp":8,"family":"RUNEBLADE_ARTIFACT","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_3","name":"Soul Campfire Initiate Badge III","rarity":"COMMON","mp":3,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_28","name":"Soul Campfire God Badge VIII","rarity":"LEGENDARY","mp":16,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_20","name":"Soul Campfire Scion Badge VIII","rarity":"EPIC","mp":12,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_4","name":"Soul Campfire Adept Badge I","rarity":"UNCOMMON","mp":5,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_23","name":"Soul Campfire God Badge III","rarity":"LEGENDARY","mp":16,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_15","name":"Soul Campfire Scion Badge III","rarity":"EPIC","mp":12,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_24","name":"Soul Campfire God Badge IV","rarity":"LEGENDARY","mp":16,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_11","name":"Soul Campfire Cultist Badge IV","rarity":"RARE","mp":8,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_16","name":"Soul Campfire Scion Badge IV","rarity":"EPIC","mp":12,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_6","name":"Soul Campfire Adept Badge III","rarity":"UNCOMMON","mp":5,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_29","name":"Soul Campfire God Badge IX","rarity":"LEGENDARY","mp":16,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_12","name":"Soul Campfire Cultist Badge V","rarity":"RARE","mp":8,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_1","name":"Soul Campfire Initiate Badge I","rarity":"COMMON","mp":3,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_10","name":"Soul Campfire Cultist Badge III","rarity":"RARE","mp":8,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_2","name":"Soul Campfire Initiate Badge II","rarity":"COMMON","mp":3,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_17","name":"Soul Campfire Scion Badge V","rarity":"EPIC","mp":12,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_14","name":"Soul Campfire Scion Badge II","rarity":"EPIC","mp":12,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_13","name":"Soul Campfire Scion Badge I","rarity":"EPIC","mp":12,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_7","name":"Soul Campfire Adept Badge IV","rarity":"UNCOMMON","mp":5,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_18","name":"Soul Campfire Scion Badge VI","rarity":"EPIC","mp":12,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_27","name":"Soul Campfire God Badge VII","rarity":"LEGENDARY","mp":16,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_21","name":"Soul Campfire God Badge I","rarity":"LEGENDARY","mp":16,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_19","name":"Soul Campfire Scion Badge VII","rarity":"EPIC","mp":12,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_25","name":"Soul Campfire God Badge V","rarity":"LEGENDARY","mp":16,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_26","name":"Soul Campfire God Badge VI","rarity":"LEGENDARY","mp":16,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_22","name":"Soul Campfire God Badge II","rarity":"LEGENDARY","mp":16,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_8","name":"Soul Campfire Cultist Badge I","rarity":"RARE","mp":8,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_5","name":"Soul Campfire Adept Badge II","rarity":"UNCOMMON","mp":5,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"SOUL_CAMPFIRE_TALISMAN_9","name":"Soul Campfire Cultist Badge II","rarity":"RARE","mp":8,"family":"SOUL_CAMPFIRE_TALISMAN_28","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"LARGE_FISH_BOWL","name":"Large Fish Bowl","rarity":"RARE","mp":8,"family":"LARGE_FISH_BOWL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"MEDIUM_FISH_BOWL","name":"Medium Fish Bowl","rarity":"UNCOMMON","mp":5,"family":"LARGE_FISH_BOWL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"SMALL_FISH_BOWL","name":"Small Fish Bowl","rarity":"COMMON","mp":3,"family":"LARGE_FISH_BOWL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"CHUMMING_TALISMAN","name":"Chumming Talisman","rarity":"UNCOMMON","mp":5,"family":"CHUMMING_TALISMAN","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"TRAPPER_CREST","name":"Trapper Crest","rarity":"COMMON","mp":3,"family":"TRAPPER_CREST","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"GENERAL_MEDALLION","name":"General's Medallion","rarity":"RARE","mp":8,"family":"GENERAL_MEDALLION","tradeable":true,"soulbound":null,"rift":false,"dungeon":true,"recombable":true},{"id":"PULSE_RING","name":"Pulse Ring","rarity":"UNCOMMON","mp":5,"family":"PULSE_RING","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"KUUDRA_FOLLOWER_ARTIFACT","name":"Kuudra Follower Artifact","rarity":"EPIC","mp":12,"family":"KUUDRA_FOLLOWER_RELIC","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"NETHERRACK_LOOKING_SUNSHADE","name":"Netherrack-Looking Sunshade","rarity":"COMMON","mp":3,"family":"NETHERRACK_LOOKING_SUNSHADE","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"KUUDRAS_HEART","name":"Kuudra's Heart","rarity":"LEGENDARY","mp":16,"family":"KUUDRAS_HEART","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"KUUDRAS_LUNG","name":"Kuudra's Lung","rarity":"EPIC","mp":12,"family":"KUUDRAS_HEART","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"KUUDRAS_KIDNEY","name":"Kuudra's Kidney","rarity":"RARE","mp":8,"family":"KUUDRAS_HEART","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WEDDING_RING_3","name":"Rubbish Ring of Love","rarity":"UNCOMMON","mp":5,"family":"WEDDING_RING_9","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true},{"id":"WEDDING_RING_1","name":"§eYellow Rock of Love","rarity":"COMMON","mp":3,"family":"WEDDING_RING_9","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":true},{"id":"WEDDING_RING_6","name":"Classy Ring of Love","rarity":"RARE","mp":8,"family":"WEDDING_RING_9","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":true},{"id":"WEDDING_RING_7","name":"Exquisite Ring of Love","rarity":"EPIC","mp":12,"family":"WEDDING_RING_9","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":true},{"id":"WEDDING_RING_4","name":"Modest Ring of Love","rarity":"RARE","mp":8,"family":"WEDDING_RING_9","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":true},{"id":"WEDDING_RING_2","name":"Mediocre Ring of Love","rarity":"UNCOMMON","mp":5,"family":"WEDDING_RING_9","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":true},{"id":"WEDDING_RING_0","name":"§eShiny Yellow Rock","rarity":"COMMON","mp":3,"family":"WEDDING_RING_9","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":true},{"id":"WEDDING_RING_8","name":"Invaluable Ring of Love","rarity":"EPIC","mp":12,"family":"WEDDING_RING_9","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":true},{"id":"WEDDING_RING_5","name":"Refined Ring of Love","rarity":"RARE","mp":8,"family":"WEDDING_RING_9","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":true},{"id":"WEDDING_RING_9","name":"Legendary Ring of Love","rarity":"LEGENDARY","mp":16,"family":"WEDDING_RING_9","tradeable":false,"soulbound":"COOP","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_8","name":"Campfire Cultist Badge I","rarity":"RARE","mp":8,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_11","name":"Campfire Cultist Badge IV","rarity":"RARE","mp":8,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_9","name":"Campfire Cultist Badge II","rarity":"RARE","mp":8,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_23","name":"Campfire God Badge III","rarity":"LEGENDARY","mp":16,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_26","name":"Campfire God Badge VI","rarity":"LEGENDARY","mp":16,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_5","name":"Campfire Adept Badge II","rarity":"UNCOMMON","mp":5,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_21","name":"Campfire God Badge I","rarity":"LEGENDARY","mp":16,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_6","name":"Campfire Adept Badge III","rarity":"UNCOMMON","mp":5,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_10","name":"Campfire Cultist Badge III","rarity":"RARE","mp":8,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_13","name":"Campfire Scion Badge I","rarity":"EPIC","mp":12,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_1","name":"Campfire Initiate Badge I","rarity":"COMMON","mp":3,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_29","name":"Campfire God Badge IX","rarity":"LEGENDARY","mp":16,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_28","name":"Campfire God Badge VIII","rarity":"LEGENDARY","mp":16,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_25","name":"Campfire God Badge V","rarity":"LEGENDARY","mp":16,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_14","name":"Campfire Scion Badge II","rarity":"EPIC","mp":12,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_19","name":"Campfire Scion Badge VII","rarity":"EPIC","mp":12,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_15","name":"Campfire Scion Badge III","rarity":"EPIC","mp":12,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_2","name":"Campfire Initiate Badge II","rarity":"COMMON","mp":3,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_18","name":"Campfire Scion Badge VI","rarity":"EPIC","mp":12,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_24","name":"Campfire God Badge IV","rarity":"LEGENDARY","mp":16,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_27","name":"Campfire God Badge VII","rarity":"LEGENDARY","mp":16,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_4","name":"Campfire Adept Badge I","rarity":"UNCOMMON","mp":5,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_7","name":"Campfire Adept Badge IV","rarity":"UNCOMMON","mp":5,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_16","name":"Campfire Scion Badge IV","rarity":"EPIC","mp":12,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_3","name":"Campfire Initiate Badge III","rarity":"COMMON","mp":3,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_20","name":"Campfire Scion Badge VIII","rarity":"EPIC","mp":12,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_17","name":"Campfire Scion Badge V","rarity":"EPIC","mp":12,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_22","name":"Campfire God Badge II","rarity":"LEGENDARY","mp":16,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"CAMPFIRE_TALISMAN_12","name":"Campfire Cultist Badge V","rarity":"RARE","mp":8,"family":"CAMPFIRE_TALISMAN_23","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"MELODY_HAIR","name":"Melody's Hair","rarity":"EPIC","mp":12,"family":"MELODY_HAIR","tradeable":false,"soulbound":"SOLO","rift":false,"dungeon":false,"recombable":true},{"id":"MAGIC_8_BALL","name":"Magic 8 Ball","rarity":"EPIC","mp":12,"family":"MAGIC_8_BALL","tradeable":true,"soulbound":null,"rift":false,"dungeon":false,"recombable":true}],"families":{"TARANTULA_RING":{"name":"Tarantula","members":["TARANTULA_RING","TARANTULA_TALISMAN"]},"ARCHAEOLOGIST_COMPASS":{"name":"Archaeologist's Compass","members":["ARCHAEOLOGIST_COMPASS"]},"ANITA_ARTIFACT":{"name":"Anita's","members":["ANITA_ARTIFACT","ANITA_RING","ANITA_TALISMAN"]},"PESTHUNTER_RELIC":{"name":"Pesthunter","members":["PESTHUNTER_RELIC","PESTHUNTER_ARTIFACT","PESTHUNTER_RING","PESTHUNTER_BADGE"]},"PARTY_HAT_SLOTH":{"name":"Sloth Hat of Celebration","members":["PARTY_HAT_SLOTH"]},"PARTY_HAT_CRAB_ANIMATED":{"name":"Crab Hat of Celebration - 2022 Edition","members":["PARTY_HAT_CRAB_ANIMATED"]},"PARTY_HAT_CRAB":{"name":"Crab Hat of Celebration","members":["PARTY_HAT_CRAB"]},"FISH_AFFINITY_TALISMAN":{"name":"Fish Affinity Talisman","members":["FISH_AFFINITY_TALISMAN"]},"FRIED_FROZEN_CHICKEN":{"name":"Fried Frozen Chicken","members":["FRIED_FROZEN_CHICKEN","FROZEN_CHICKEN"]},"SCARF_GRIMOIRE":{"name":"Scarf's Grimoire","members":["SCARF_GRIMOIRE","PHD_GRIMOIRE","SCARF_THESIS","MASTER_THESIS","SCARF_STUDIES","STUDENT_STUDIES","APPLICANT_STATEMENT"]},"JUNK_ARTIFACT":{"name":"Junk","members":["JUNK_ARTIFACT","JUNK_RING","JUNK_TALISMAN"]},"WITCH_ARTIFACT":{"name":"Witch's","members":["WITCH_ARTIFACT","WITCH_RING","WITCH_TALISMAN"]},"CENTURY_ARTIFACT":{"name":"Artifact of the Century","members":["CENTURY_ARTIFACT","CENTURY_RING","CENTURY_TALISMAN"]},"RUNEBOOK":{"name":"Runebook","members":["RUNEBOOK"]},"PRESTIGE_CHOCOLATE_REALM":{"name":"Prestige Chocolate Realm","members":["PRESTIGE_CHOCOLATE_REALM","GANACHE_CHOCOLATE_SLAB","RICH_CHOCOLATE_CHUNK","SMOOTH_CHOCOLATE_BAR","NIBBLE_CHOCOLATE_STICK"]},"GREAT_SPOOK_ARTIFACT":{"name":"Great Spook","members":["GREAT_SPOOK_ARTIFACT","GREAT_SPOOK_RING","GREAT_SPOOK_TALISMAN"]},"BITS_TALISMAN":{"name":"Bits Talisman","members":["BITS_TALISMAN"]},"ABICASE":{"name":"Abicase","members":["ABICASE"]},"GLOSSY_MINERAL_TALISMAN":{"name":"Glossy Mineral Talisman","members":["GLOSSY_MINERAL_TALISMAN","MINERAL_TALISMAN"]},"FRESHLY_BAKED_HEIRLOOM":{"name":"Freshly Baked","members":["FRESHLY_BAKED_HEIRLOOM","FRESHLY_BAKED_RELIC","FRESHLY_BAKED_ARTIFACT","FRESHLY_BAKED_RING","FRESHLY_BAKED_TALISMAN"]},"GRATITUDE_ARTIFACT":{"name":"Gratitude","members":["GRATITUDE_ARTIFACT","GRATITUDE_RING","GRATITUDE_TALISMAN"]},"SCAVENGER_ARTIFACT":{"name":"Scavenger","members":["SCAVENGER_ARTIFACT","SCAVENGER_RING","SCAVENGER_TALISMAN"]},"ANGUISH_ARTIFACT":{"name":"Anguish","members":["ANGUISH_ARTIFACT","ANGUISH_RING","ANGUISH_TALISMAN"]},"BEASTMASTER_CREST_LEGENDARY":{"name":"Beastmaster Crest","members":["BEASTMASTER_CREST_LEGENDARY","BEASTMASTER_CREST_EPIC","BEASTMASTER_CREST_RARE","BEASTMASTER_CREST_UNCOMMON","BEASTMASTER_CREST_COMMON"]},"JERRY_TALISMAN_GOLDEN":{"name":"Golden Jerry Artifact","members":["JERRY_TALISMAN_GOLDEN","JERRY_TALISMAN_PURPLE","JERRY_TALISMAN_BLUE","JERRY_TALISMAN_GREEN"]},"HEGEMONY_ARTIFACT":{"name":"Hegemony Artifact","members":["HEGEMONY_ARTIFACT"]},"RAZOR_SHARP_SHARK_TOOTH_NECKLACE":{"name":"Razor-sharp Shark Tooth Necklace","members":["RAZOR_SHARP_SHARK_TOOTH_NECKLACE","SHARP_SHARK_TOOTH_NECKLACE","HONED_SHARK_TOOTH_NECKLACE","DULL_SHARK_TOOTH_NECKLACE","RAGGEDY_SHARK_TOOTH_NECKLACE"]},"BINGO_HEIRLOOM":{"name":"Bingo","members":["BINGO_HEIRLOOM","BINGO_RELIC","BINGO_ARTIFACT","BINGO_RING","BINGO_TALISMAN"]},"BUCKET_OF_DYE":{"name":"Bucket of Dye","members":["BUCKET_OF_DYE"]},"SEA_CREATURE_ARTIFACT":{"name":"Sea Creature","members":["SEA_CREATURE_ARTIFACT","SEA_CREATURE_RING","SEA_CREATURE_TALISMAN"]},"INTIMIDATION_RELIC":{"name":"Intimidation","members":["INTIMIDATION_RELIC","INTIMIDATION_ARTIFACT","INTIMIDATION_RING","INTIMIDATION_TALISMAN"]},"ODGERS_DIAMOND_TOOTH":{"name":"Odger's","members":["ODGERS_DIAMOND_TOOTH","ODGERS_GOLD_TOOTH","ODGERS_SILVER_TOOTH","ODGERS_BRONZE_TOOTH"]},"LUCK_TALISMAN":{"name":"Luck Talisman","members":["LUCK_TALISMAN"]},"POWER_RELIC":{"name":"Relic of Power","members":["POWER_RELIC","POWER_ARTIFACT","POWER_RING","POWER_TALISMAN"]},"BAT_PERSON_ARTIFACT":{"name":"Bat Person","members":["BAT_PERSON_ARTIFACT","BAT_PERSON_RING","BAT_PERSON_TALISMAN"]},"WOLF_PAW":{"name":"Wolf Paw","members":["WOLF_PAW"]},"FEATHER_ARTIFACT":{"name":"Feather","members":["FEATHER_ARTIFACT","FEATHER_RING","FEATHER_TALISMAN"]},"NIGHT_VISION_CHARM":{"name":"Night Vision Charm","members":["NIGHT_VISION_CHARM"]},"PERSONAL_DELETOR_7000":{"name":"Personal Deletor","members":["PERSONAL_DELETOR_7000","PERSONAL_DELETOR_6000","PERSONAL_DELETOR_5000","PERSONAL_DELETOR_4000"]},"ARTIFACT_OF_SPACE":{"name":"Artifact of Space","members":["ARTIFACT_OF_SPACE","RING_OF_SPACE","TALISMAN_OF_SPACE"]},"LAVA_TALISMAN":{"name":"Lava Talisman","members":["LAVA_TALISMAN"]},"RELIC_OF_COINS":{"name":"Relic of Coins","members":["RELIC_OF_COINS","ARTIFACT_OF_COINS","RING_OF_COINS","COIN_TALISMAN"]},"MASTER_SKULL_TIER_10":{"name":"Master Skull - Tier","members":["MASTER_SKULL_TIER_10","MASTER_SKULL_TIER_7","MASTER_SKULL_TIER_9","MASTER_SKULL_TIER_8","MASTER_SKULL_TIER_6","MASTER_SKULL_TIER_5","MASTER_SKULL_TIER_4","MASTER_SKULL_TIER_3","MASTER_SKULL_TIER_1","MASTER_SKULL_TIER_2"]},"HEALING_RING":{"name":"Healing","members":["HEALING_RING","HEALING_TALISMAN"]},"BAT_ARTIFACT":{"name":"Bat","members":["BAT_ARTIFACT","BAT_RING","BAT_TALISMAN"]},"EMERALD_ARTIFACT":{"name":"Emerald","members":["EMERALD_ARTIFACT","EMERALD_RING"]},"SEAL_RING":{"name":"Seal","members":["SEAL_RING","SEAL_TALISMAN"]},"NEW_YEAR_CAKE_BAG":{"name":"New Year Cake Bag","members":["NEW_YEAR_CAKE_BAG"]},"FIRE_TALISMAN":{"name":"Fire Talisman","members":["FIRE_TALISMAN"]},"TITANIUM_RELIC":{"name":"Titanium","members":["TITANIUM_RELIC","TITANIUM_ARTIFACT","TITANIUM_RING","TITANIUM_TALISMAN"]},"WOOD_TALISMAN":{"name":"Wood Affinity Talisman","members":["WOOD_TALISMAN"]},"CRACKED_PIGGY_BANK":{"name":"Cracked Piggy Bank","members":["CRACKED_PIGGY_BANK","PIGGY_BANK","BROKEN_PIGGY_BANK"]},"VACCINE_ARTIFACT":{"name":"Vaccine","members":["VACCINE_ARTIFACT","VACCINE_RING","VACCINE_TALISMAN"]},"SEAL_OF_THE_FAMILY":{"name":"Seal of the Family","members":["SEAL_OF_THE_FAMILY","CROOKED_ARTIFACT","SHADY_RING"]},"PERSONAL_COMPACTOR_7000":{"name":"Personal Compactor","members":["PERSONAL_COMPACTOR_7000","PERSONAL_COMPACTOR_6000","PERSONAL_COMPACTOR_5000","PERSONAL_COMPACTOR_4000"]},"HASTE_ARTIFACT":{"name":"Haste","members":["HASTE_ARTIFACT","HASTE_RING"]},"CHEETAH_TALISMAN":{"name":"Cheetah Talisman","members":["CHEETAH_TALISMAN","LYNX_TALISMAN","CAT_TALISMAN"]},"FARMER_ORB":{"name":"Farmer Orb","members":["FARMER_ORB"]},"CANDY_RELIC":{"name":"Candy","members":["CANDY_RELIC","CANDY_ARTIFACT","CANDY_RING","CANDY_TALISMAN"]},"ETERNAL_HOOF":{"name":"Eternal Hoof","members":["ETERNAL_HOOF","LUCKY_HOOF"]},"GRAVITY_TALISMAN":{"name":"Gravity Talisman","members":["GRAVITY_TALISMAN"]},"SPIKED_ATROCITY":{"name":"Spiked Atrocity","members":["SPIKED_ATROCITY","BAIT_RING"]},"JACOBUS_REGISTER":{"name":"Jacobus Register","members":["JACOBUS_REGISTER"]},"POTATO_RING":{"name":"Potato","members":["POTATO_RING","POTATO_TALISMAN"]},"CATACOMBS_EXPERT_RING":{"name":"Catacombs Expert Ring","members":["CATACOMBS_EXPERT_RING"]},"PIGS_FOOT":{"name":"Pig's Foot","members":["PIGS_FOOT"]},"SPEED_RELIC":{"name":"Speed","members":["SPEED_RELIC","SPEED_ARTIFACT","SPEED_RING","SPEED_TALISMAN"]},"SUNSHINE_CRYSTAL":{"name":"Sunshine Crystal","members":["SUNSHINE_CRYSTAL","DAY_CRYSTAL"]},"SAFETY_BADGE":{"name":"Safety Badge","members":["SAFETY_BADGE"]},"WITHER_RELIC":{"name":"Wither","members":["WITHER_RELIC","WITHER_ARTIFACT"]},"AUTO_RECOMBOBULATOR":{"name":"Auto Recombobulator","members":["AUTO_RECOMBOBULATOR"]},"COMPASS_TALISMAN":{"name":"Compass Talisman","members":["COMPASS_TALISMAN"]},"INFERNAL_KUUDRA_CORE":{"name":"Infernal Kuudra Core","members":["INFERNAL_KUUDRA_CORE","FIERY_KUUDRA_CORE","BURNING_KUUDRA_CORE"]},"VILLAGE_TALISMAN":{"name":"Village Affinity Talisman","members":["VILLAGE_TALISMAN"]},"ARTIFACT_POTION_AFFINITY":{"name":"Potion Affinity","members":["ARTIFACT_POTION_AFFINITY","RING_POTION_AFFINITY","POTION_AFFINITY_TALISMAN"]},"MINE_TALISMAN":{"name":"Mine Affinity Talisman","members":["MINE_TALISMAN"]},"TREASURE_ARTIFACT":{"name":"Treasure","members":["TREASURE_ARTIFACT","TREASURE_RING","TREASURE_TALISMAN"]},"WOLF_RING":{"name":"Wolf","members":["WOLF_RING","WOLF_TALISMAN"]},"DANTE_RING":{"name":"Dante's","members":["DANTE_RING","DANTE_TALISMAN"]},"NETHER_ARTIFACT":{"name":"Nether Artifact","members":["NETHER_ARTIFACT"]},"BLOOD_GOD_SIGIL":{"name":"Blood God","members":["BLOOD_GOD_SIGIL","BLOOD_GOD_CREST"]},"KUUDRA_FOLLOWER_RELIC":{"name":"Kuudra Follower","members":["KUUDRA_FOLLOWER_RELIC","KUUDRA_FOLLOWER_ARTIFACT"]},"MOONLIGHT_CRYSTAL":{"name":"Moonlight Crystal","members":["MOONLIGHT_CRYSTAL","NIGHT_CRYSTAL"]},"SHENS_REGALIA":{"name":"Shen's Regalia","members":["SHENS_REGALIA"]},"MAGNETIC_TALISMAN":{"name":"Magnetic Talisman","members":["MAGNETIC_TALISMAN"]},"GRIZZLY_PAW":{"name":"Grizzly Paw","members":["GRIZZLY_PAW"]},"PANDORAS_BOX":{"name":"Pandora's Box","members":["PANDORAS_BOX"]},"ARTIFACT_OF_CONTROL":{"name":"Artifact of Control","members":["ARTIFACT_OF_CONTROL"]},"CARNIVAL_MASK_BAG":{"name":"Carnival Mask Bag","members":["CARNIVAL_MASK_BAG"]},"KING_TALISMAN":{"name":"King Talisman","members":["KING_TALISMAN"]},"SPIDER_ARTIFACT":{"name":"Spider","members":["SPIDER_ARTIFACT","SPIDER_RING","SPIDER_TALISMAN"]},"ETERNAL_CRYSTAL":{"name":"Eternal Crystal","members":["ETERNAL_CRYSTAL"]},"FARMING_TALISMAN":{"name":"Farming Talisman","members":["FARMING_TALISMAN"]},"SKELETON_TALISMAN":{"name":"Skeleton Talisman","members":["SKELETON_TALISMAN"]},"JUNGLE_AMULET":{"name":"Jungle Amulet","members":["JUNGLE_AMULET"]},"ZOMBIE_ARTIFACT":{"name":"Zombie","members":["ZOMBIE_ARTIFACT","ZOMBIE_RING","ZOMBIE_TALISMAN"]},"OLD_BOOT":{"name":"Old Boot","members":["OLD_BOOT"]},"EXPERIENCE_ARTIFACT":{"name":"Experience Artifact","members":["EXPERIENCE_ARTIFACT"]},"BOOK_OF_PROGRESSION":{"name":"Book of Progression","members":["BOOK_OF_PROGRESSION"]},"BLAZE_TALISMAN":{"name":"Blaze Talisman","members":["BLAZE_TALISMAN"]},"BURSTSTOPPER_ARTIFACT":{"name":"Burststopper","members":["BURSTSTOPPER_ARTIFACT","BURSTSTOPPER_TALISMAN"]},"SOULFLOW_SUPERCELL":{"name":"Soulflow","members":["SOULFLOW_SUPERCELL","SOULFLOW_BATTERY","SOULFLOW_PILE"]},"ENDER_RELIC":{"name":"Ender","members":["ENDER_RELIC","ENDER_ARTIFACT"]},"HANDY_BLOOD_CHALICE":{"name":"Handy Blood Chalice","members":["HANDY_BLOOD_CHALICE"]},"POCKET_ESPRESSO_MACHINE":{"name":"Pocket Espresso Machine","members":["POCKET_ESPRESSO_MACHINE"]},"SURVIVOR_CUBE":{"name":"Survivor Cube","members":["SURVIVOR_CUBE"]},"REAPER_ORB":{"name":"Reaper Orb","members":["REAPER_ORB"]},"DEVOUR_RING":{"name":"Devour Ring","members":["DEVOUR_RING"]},"HUNTER_RING":{"name":"Hunter","members":["HUNTER_RING","HUNTER_TALISMAN"]},"RED_CLAW_ARTIFACT":{"name":"Red Claw","members":["RED_CLAW_ARTIFACT","RED_CLAW_RING","RED_CLAW_TALISMAN"]},"DWARVEN_METAL":{"name":"Dwarven Metal Talisman","members":["DWARVEN_METAL"]},"HELIANTHUS_RELIC":{"name":"Helianthus Relic","members":["HELIANTHUS_RELIC","FERMENTO_ARTIFACT","SQUASH_RING","CROPIE_TALISMAN"]},"BIOANALYSIS_ARTIFACT":{"name":"Bioanalysis","members":["BIOANALYSIS_ARTIFACT","BIOANALYSIS_RING","BIOANALYSIS_TALISMAN"]},"COPPER_ARTIFACT":{"name":"Copper","members":["COPPER_ARTIFACT","COPPER_RING","COPPER_TALISMAN"]},"ATMOSPHERIC_FILTER":{"name":"Atmospheric Filter","members":["ATMOSPHERIC_FILTER"]},"JAKE_PLUSHIE":{"name":"Jake's Plushie","members":["JAKE_PLUSHIE"]},"VOTER_BADGE_SUPREME":{"name":"Supreme Voter's Badge","members":["VOTER_BADGE_SUPREME","VOTER_BADGE_ELITE","VOTER_BADGE_VIP","VOTER_BADGE"]},"GOLD_GIFT_TALISMAN":{"name":"Gold Gift Talisman","members":["GOLD_GIFT_TALISMAN","PURPLE_GIFT_TALISMAN","BLUE_GIFT_TALISMAN","GREEN_GIFT_TALISMAN","WHITE_GIFT_TALISMAN"]},"GLACIAL_ARTIFACT":{"name":"Glacial","members":["GLACIAL_ARTIFACT","GLACIAL_RING","GLACIAL_TALISMAN"]},"LUMBERJACK_ARTIFACT":{"name":"Lumberjack","members":["LUMBERJACK_ARTIFACT","LUMBERJACK_RING","LUMBERJACK_TALISMAN"]},"ACCRETION_ARTIFACT":{"name":"Accretion","members":["ACCRETION_ARTIFACT","ACCRETION_RING","ACCRETION_TALISMAN"]},"HONEYCOMB_ARTIFACT":{"name":"Honeycomb","members":["HONEYCOMB_ARTIFACT","HONEYCOMB_RING","HONEYCOMB_TALISMAN"]},"TORRHUS_ARTIFACT":{"name":"Torrhus","members":["TORRHUS_ARTIFACT","TORRHUS_RING","TORRHUS_TALISMAN"]},"FUTURE_CALORIES":{"name":"Future Calories Talisman","members":["FUTURE_CALORIES"]},"RIFT_PRISM":{"name":"Rift Prism","members":["RIFT_PRISM"]},"PUNCHCARD_ARTIFACT":{"name":"Punchcard Artifact","members":["PUNCHCARD_ARTIFACT"]},"WARDING_TRINKET":{"name":"Warding Trinket","members":["WARDING_TRINKET"]},"HARMONIOUS_SURGERY_TOOLKIT":{"name":"Harmonious Surgery Toolkit","members":["HARMONIOUS_SURGERY_TOOLKIT"]},"CRUX_TALISMAN_6":{"name":"Crux Chronomicon","members":["CRUX_TALISMAN_6","CRUX_TALISMAN_5","CRUX_TALISMAN_4","CRUX_TALISMAN_3","CRUX_TALISMAN_2","CRUX_TALISMAN_1","CRUX_TALISMAN_7"]},"IQ_POINT":{"name":"IQ Point","members":["IQ_POINT"]},"RING_OF_BROKEN_LOVE":{"name":"Ring of Broken Love","members":["RING_OF_BROKEN_LOVE"]},"RING_OF_ETERNAL_LOVE":{"name":"Ring of Eternal Love","members":["RING_OF_ETERNAL_LOVE"]},"TWO_IQ_POINT":{"name":"2 IQ Points","members":["TWO_IQ_POINT"]},"ARGOFAY_TRINKET":{"name":"Argofay Trinket","members":["ARGOFAY_TRINKET"]},"DEFECTIVE_MONITOR":{"name":"Defective Monitor","members":["DEFECTIVE_MONITOR"]},"BLUERTOOTH_RING":{"name":"Bluertooth Ring","members":["BLUERTOOTH_RING","BLUETOOTH_RING"]},"LUSH_ARTIFACT":{"name":"Lush","members":["LUSH_ARTIFACT","LUSH_RING","LUSH_TALISMAN"]},"AGARIMOO_ARTIFACT":{"name":"Agarimoo","members":["AGARIMOO_ARTIFACT","AGARIMOO_RING","AGARIMOO_TALISMAN"]},"HOCUS_POCUS_CIPHER":{"name":"Hocus-Pocus Cipher","members":["HOCUS_POCUS_CIPHER"]},"SATELITE":{"name":"Satelite","members":["SATELITE"]},"COMBO_MANIA_TALISMAN":{"name":"Combo Mania","members":["COMBO_MANIA_TALISMAN"]},"TINY_DANCER":{"name":"Tiny Dancer","members":["TINY_DANCER"]},"TEST_BUCKET_PLEASE_IGNORE":{"name":"Test Bucket Please Ignore","members":["TEST_BUCKET_PLEASE_IGNORE"]},"BIG_BRAIN_TALISMAN":{"name":"Big Brain Talisman","members":["BIG_BRAIN_TALISMAN"]},"MINIATURIZED_TUBULATOR":{"name":"Miniaturized Tubulator","members":["MINIATURIZED_TUBULATOR"]},"GARLIC_FLAVORED_GUMMY_BEAR":{"name":"Perma-Jelled Garlic-Flavored Re-Heated Gummy Polar Bear","members":["GARLIC_FLAVORED_GUMMY_BEAR"]},"BLOOD_DONOR_ARTIFACT":{"name":"Blood Donor","members":["BLOOD_DONOR_ARTIFACT","BLOOD_DONOR_RING","BLOOD_DONOR_TALISMAN"]},"VAMPIRE_DENTIST_RELIC":{"name":"Vampire Dentist Relic","members":["VAMPIRE_DENTIST_RELIC"]},"ORGAN_DONOR_ARTIFACT":{"name":"Organ Donor","members":["ORGAN_DONOR_ARTIFACT","ORGAN_DONOR_RING","ORGAN_DONOR_TALISMAN"]},"DRACONIC_ARTIFACT":{"name":"Draconic","members":["DRACONIC_ARTIFACT","DRACONIC_RING","DRACONIC_TALISMAN"]},"RESPIRATION_ARTIFACT":{"name":"Respiration","members":["RESPIRATION_ARTIFACT","RESPIRATION_RING","RESPIRATION_TALISMAN"]},"MOONGLADE_ARTIFACT":{"name":"Moonglade","members":["MOONGLADE_ARTIFACT","MOONGLADE_RING","MOONGLADE_TALISMAN"]},"EMPEROR_ARTIFACT":{"name":"Emperor's","members":["EMPEROR_ARTIFACT","EMPEROR_RING","EMPEROR_TALISMAN"]},"PRESSURE_ARTIFACT":{"name":"Pressure","members":["PRESSURE_ARTIFACT","PRESSURE_RING","PRESSURE_TALISMAN"]},"RUNEBLADE_ARTIFACT":{"name":"Runeblade","members":["RUNEBLADE_ARTIFACT","RUNEBLADE_RING","RUNEBLADE_TALISMAN"]},"SOUL_CAMPFIRE_TALISMAN_28":{"name":"Soul Campfire","members":["SOUL_CAMPFIRE_TALISMAN_28","SOUL_CAMPFIRE_TALISMAN_23","SOUL_CAMPFIRE_TALISMAN_24","SOUL_CAMPFIRE_TALISMAN_29","SOUL_CAMPFIRE_TALISMAN_27","SOUL_CAMPFIRE_TALISMAN_21","SOUL_CAMPFIRE_TALISMAN_25","SOUL_CAMPFIRE_TALISMAN_26","SOUL_CAMPFIRE_TALISMAN_22","SOUL_CAMPFIRE_TALISMAN_20","SOUL_CAMPFIRE_TALISMAN_15","SOUL_CAMPFIRE_TALISMAN_16","SOUL_CAMPFIRE_TALISMAN_17","SOUL_CAMPFIRE_TALISMAN_14","SOUL_CAMPFIRE_TALISMAN_13","SOUL_CAMPFIRE_TALISMAN_18","SOUL_CAMPFIRE_TALISMAN_19","SOUL_CAMPFIRE_TALISMAN_11","SOUL_CAMPFIRE_TALISMAN_12","SOUL_CAMPFIRE_TALISMAN_10","SOUL_CAMPFIRE_TALISMAN_8","SOUL_CAMPFIRE_TALISMAN_9","SOUL_CAMPFIRE_TALISMAN_4","SOUL_CAMPFIRE_TALISMAN_6","SOUL_CAMPFIRE_TALISMAN_7","SOUL_CAMPFIRE_TALISMAN_5","SOUL_CAMPFIRE_TALISMAN_3","SOUL_CAMPFIRE_TALISMAN_1","SOUL_CAMPFIRE_TALISMAN_2"]},"LARGE_FISH_BOWL":{"name":"Large Fish Bowl","members":["LARGE_FISH_BOWL","MEDIUM_FISH_BOWL","SMALL_FISH_BOWL"]},"CHUMMING_TALISMAN":{"name":"Chumming Talisman","members":["CHUMMING_TALISMAN"]},"TRAPPER_CREST":{"name":"Trapper Crest","members":["TRAPPER_CREST"]},"GENERAL_MEDALLION":{"name":"General's Medallion","members":["GENERAL_MEDALLION"]},"PULSE_RING":{"name":"Pulse Ring","members":["PULSE_RING"]},"NETHERRACK_LOOKING_SUNSHADE":{"name":"Netherrack-Looking Sunshade","members":["NETHERRACK_LOOKING_SUNSHADE"]},"KUUDRAS_HEART":{"name":"Kuudra's","members":["KUUDRAS_HEART","KUUDRAS_LUNG","KUUDRAS_KIDNEY"]},"WEDDING_RING_9":{"name":"Legendary Ring of Love","members":["WEDDING_RING_9","WEDDING_RING_7","WEDDING_RING_8","WEDDING_RING_6","WEDDING_RING_4","WEDDING_RING_5","WEDDING_RING_3","WEDDING_RING_2","WEDDING_RING_1","WEDDING_RING_0"]},"CAMPFIRE_TALISMAN_23":{"name":"Campfire","members":["CAMPFIRE_TALISMAN_23","CAMPFIRE_TALISMAN_26","CAMPFIRE_TALISMAN_21","CAMPFIRE_TALISMAN_29","CAMPFIRE_TALISMAN_28","CAMPFIRE_TALISMAN_25","CAMPFIRE_TALISMAN_24","CAMPFIRE_TALISMAN_27","CAMPFIRE_TALISMAN_22","CAMPFIRE_TALISMAN_13","CAMPFIRE_TALISMAN_14","CAMPFIRE_TALISMAN_19","CAMPFIRE_TALISMAN_15","CAMPFIRE_TALISMAN_18","CAMPFIRE_TALISMAN_16","CAMPFIRE_TALISMAN_20","CAMPFIRE_TALISMAN_17","CAMPFIRE_TALISMAN_8","CAMPFIRE_TALISMAN_11","CAMPFIRE_TALISMAN_9","CAMPFIRE_TALISMAN_10","CAMPFIRE_TALISMAN_12","CAMPFIRE_TALISMAN_5","CAMPFIRE_TALISMAN_6","CAMPFIRE_TALISMAN_4","CAMPFIRE_TALISMAN_7","CAMPFIRE_TALISMAN_1","CAMPFIRE_TALISMAN_2","CAMPFIRE_TALISMAN_3"]},"MELODY_HAIR":{"name":"Melody's Hair","members":["MELODY_HAIR"]},"MAGIC_8_BALL":{"name":"Magic 8 Ball","members":["MAGIC_8_BALL"]}}}; window.__PRICES__ = {"generated":1787787134623,"auctionsUpdated":1787787065687,"recombobulator":{"buy":10000216.827335639,"sell":9544449.863665594},"lowestBin":{"TITANIUM_TALISMAN|UNCOMMON|0":{"price":1599999,"count":13},"SEAL_RING|RARE|0":{"price":7100000,"count":117},"LUCKY_HOOF|UNCOMMON|0":{"price":100000,"count":48},"LUCKY_HOOF|RARE|1":{"price":8000000,"count":2},"BAT_RING|EPIC|0":{"price":1870000,"count":7},"GLACIAL_TALISMAN|COMMON|0":{"price":115000,"count":1},"BAT_TALISMAN|RARE|0":{"price":1000000,"count":13},"PERSONAL_COMPACTOR_5000|RARE|0":{"price":500000,"count":3},"MOONGLADE_ARTIFACT|RARE|0":{"price":1492499,"count":24},"PULSE_RING|UNCOMMON|0":{"price":2190000,"count":16},"SPIDER_TALISMAN|UNCOMMON|0":{"price":140000,"count":6},"TREASURE_TALISMAN|RARE|0":{"price":749000,"count":41},"PESTHUNTER_RING|RARE|0":{"price":498000,"count":15},"RUNEBLADE_RING|UNCOMMON|0":{"price":650000,"count":24},"CANDY_TALISMAN|UNCOMMON|0":{"price":220000,"count":25},"SCARF_THESIS|EPIC|0":{"price":7000000,"count":10},"BAT_PERSON_ARTIFACT|RARE|0":{"price":29248000,"count":15},"CROPIE_TALISMAN|COMMON|0":{"price":6899999,"count":7},"KUUDRAS_HEART|LEGENDARY|0":{"price":180890998,"count":10},"AGARIMOO_ARTIFACT|RARE|0":{"price":5899999,"count":28},"BAT_ARTIFACT|LEGENDARY|0":{"price":3400000,"count":45},"SCARF_STUDIES|RARE|0":{"price":1399999,"count":19},"DAY_CRYSTAL|RARE|0":{"price":479000,"count":20},"HANDY_BLOOD_CHALICE|COMMON|0":{"price":500000,"count":17},"HASTE_ARTIFACT|EPIC|0":{"price":350000,"count":36},"MASTER_SKULL_TIER_5|RARE|0":{"price":33900000,"count":12},"SUNSHINE_CRYSTAL|EPIC|0":{"price":4747999,"count":19},"POCKET_ESPRESSO_MACHINE|COMMON|0":{"price":200000,"count":23},"MOONGLADE_RING|UNCOMMON|0":{"price":449999,"count":12},"TARANTULA_TALISMAN|EPIC|0":{"price":100000,"count":13},"SPIDER_ARTIFACT|EPIC|0":{"price":8499996,"count":26},"HUNTER_TALISMAN|UNCOMMON|0":{"price":9000000,"count":8},"PERSONAL_COMPACTOR_6000|EPIC|0":{"price":899000,"count":19},"ATMOSPHERIC_FILTER|RARE|0":{"price":189999,"count":26},"WOLF_TALISMAN|UNCOMMON|0":{"price":700000,"count":22},"JERRY_TALISMAN_GREEN|UNCOMMON|0":{"price":2499000,"count":15},"SPEED_RING|UNCOMMON|0":{"price":300000,"count":17},"ACCRETION_TALISMAN|COMMON|0":{"price":400000,"count":12},"CHUMMING_TALISMAN|UNCOMMON|0":{"price":400000,"count":31},"NIBBLE_CHOCOLATE_STICK|COMMON|0":{"price":150000,"count":10},"PRESSURE_RING|UNCOMMON|0":{"price":2700000,"count":7},"HONEYCOMB_TALISMAN|COMMON|0":{"price":200000,"count":5},"INTIMIDATION_RELIC|EPIC|0":{"price":13444433,"count":33},"HEALING_RING|UNCOMMON|0":{"price":350000,"count":9},"ARTIFACT_POTION_AFFINITY|RARE|0":{"price":370000,"count":10},"TORRHUS_RING|UNCOMMON|0":{"price":999999,"count":6},"HONEYCOMB_RING|UNCOMMON|0":{"price":400000,"count":19},"GOLD_GIFT_TALISMAN|LEGENDARY|0":{"price":9900000,"count":72},"TORRHUS_ARTIFACT|RARE|0":{"price":2999999,"count":54},"ACCRETION_RING|UNCOMMON|0":{"price":1160000,"count":41},"BLOOD_GOD_CREST|COMMON|0":{"price":1750000,"count":42},"ETERNAL_HOOF|RARE|0":{"price":16400000,"count":9},"WHITE_GIFT_TALISMAN|UNCOMMON|1":{"price":10000000,"count":1},"RED_CLAW_TALISMAN|UNCOMMON|0":{"price":125000,"count":43},"HONEYCOMB_ARTIFACT|RARE|0":{"price":1050000,"count":31},"PERSONAL_COMPACTOR_7000|LEGENDARY|0":{"price":1329999,"count":47},"CANDY_ARTIFACT|EPIC|0":{"price":1641749,"count":38},"BALLOON_HAT_2024|SPECIAL|0":{"price":3000000,"count":26},"BUCKET_OF_DYE|RARE|0":{"price":2000000,"count":11},"NEW_YEAR_CAKE_BAG|UNCOMMON|0":{"price":600000,"count":41},"MINERAL_TALISMAN|RARE|0":{"price":2600000,"count":22},"BLAZE_TALISMAN|RARE|0":{"price":2950000,"count":17},"HASTE_RING|RARE|0":{"price":100000,"count":16},"FEATHER_ARTIFACT|RARE|0":{"price":500000,"count":23},"BROKEN_PIGGY_BANK|UNCOMMON|0":{"price":500000,"count":8},"SEA_CREATURE_RING|UNCOMMON|0":{"price":300000,"count":5},"HASTE_RING|EPIC|1":{"price":6380000,"count":4},"RUNEBLADE_ARTIFACT|EPIC|1":{"price":14000000,"count":5},"DAY_CRYSTAL|EPIC|1":{"price":6290000,"count":3},"GREEN_GIFT_TALISMAN|UNCOMMON|0":{"price":898999,"count":12},"LUSH_ARTIFACT|EPIC|0":{"price":2670000,"count":32},"DRACONIC_ARTIFACT|LEGENDARY|1":{"price":65000000,"count":2},"MASTER_SKULL_TIER_3|UNCOMMON|0":{"price":1700000,"count":16},"HUNTER_RING|EPIC|1":{"price":46000000,"count":1},"BLOOD_GOD_CREST|UNCOMMON|1":{"price":15000000,"count":1},"SHARP_SHARK_TOOTH_NECKLACE|EPIC|0":{"price":988888,"count":32},"SOULFLOW_SUPERCELL|LEGENDARY|1":{"price":37000000,"count":4},"DANTE_TALISMAN|COMMON|0":{"price":9999000,"count":17},"LAVA_TALISMAN|UNCOMMON|0":{"price":180000,"count":17},"ABICASE|RARE|0":{"price":18000000,"count":23},"JUNK_ARTIFACT|RARE|0":{"price":1799997,"count":75},"ACCRETION_ARTIFACT|RARE|0":{"price":18000000,"count":18},"JERRY_TALISMAN_PURPLE|LEGENDARY|1":{"price":91700000,"count":2},"PERSONAL_COMPACTOR_4000|UNCOMMON|0":{"price":375000,"count":23},"DULL_SHARK_TOOTH_NECKLACE|UNCOMMON|0":{"price":320000,"count":9},"GANACHE_CHOCOLATE_SLAB|EPIC|0":{"price":900000,"count":8},"ENDER_RELIC|MYTHIC|1":{"price":179999999,"count":10},"CANDY_RING|RARE|0":{"price":350000,"count":16},"PIGGY_BANK|UNCOMMON|0":{"price":350000,"count":53},"GRAVITY_TALISMAN|UNCOMMON|0":{"price":50000,"count":27},"COPPER_TALISMAN|COMMON|0":{"price":8000000,"count":9},"BAT_PERSON_RING|UNCOMMON|0":{"price":6000000,"count":2},"BEASTMASTER_CREST_RARE|RARE|0":{"price":11500000,"count":13},"TRAPPER_CREST|COMMON|0":{"price":5989999,"count":21},"RED_CLAW_ARTIFACT|EPIC|0":{"price":10000000,"count":3},"ANITA_ARTIFACT|RARE|0":{"price":12500000,"count":12},"SPIDER_RING|EPIC|1":{"price":6000000,"count":3},"NIGHT_CRYSTAL|RARE|0":{"price":350000,"count":44},"ENDER_ARTIFACT|EPIC|0":{"price":163350000,"count":12},"FISH_AFFINITY_TALISMAN|RARE|0":{"price":396000,"count":44},"HONED_SHARK_TOOTH_NECKLACE|RARE|0":{"price":500000,"count":2},"JUNGLE_AMULET|UNCOMMON|0":{"price":2145000,"count":41},"WOOD_TALISMAN|UNCOMMON|0":{"price":124999,"count":62},"LUSH_RING|RARE|0":{"price":610000,"count":4},"AUTO_RECOMBOBULATOR|LEGENDARY|0":{"price":10589998,"count":33},"DEVOUR_RING|RARE|0":{"price":2799999,"count":27},"EMERALD_RING|UNCOMMON|0":{"price":100000,"count":37},"CARNIVAL_MASK_BAG|COMMON|0":{"price":1900000,"count":24},"MASTER_SKULL_TIER_4|UNCOMMON|0":{"price":7699999,"count":35},"ZOMBIE_ARTIFACT|RARE|0":{"price":4333224,"count":4},"BLOOD_DONOR_ARTIFACT|RARE|0":{"price":30000000,"count":8},"HOCUS_POCUS_CIPHER|EPIC|0":{"price":88000000,"count":6},"PESTHUNTER_BADGE|UNCOMMON|0":{"price":400000,"count":11},"BURNING_KUUDRA_CORE|RARE|0":{"price":37000000,"count":12},"VACCINE_ARTIFACT|RARE|0":{"price":11999999,"count":5},"GLACIAL_ARTIFACT|RARE|0":{"price":8489000,"count":7},"ARTIFACT_OF_CONTROL|MYTHIC|1":{"price":1800000000,"count":2},"BLUETOOTH_RING|RARE|0":{"price":2699000,"count":34},"WITHER_ARTIFACT|EPIC|0":{"price":77000000,"count":17},"PESTHUNTER_RELIC|MYTHIC|1":{"price":16500000,"count":6},"ZOMBIE_RING|UNCOMMON|0":{"price":88888,"count":37},"BAT_ARTIFACT|MYTHIC|1":{"price":11111000,"count":6},"PURPLE_GIFT_TALISMAN|EPIC|0":{"price":1899000,"count":19},"RESPIRATION_ARTIFACT|RARE|0":{"price":3999897,"count":35},"SQUASH_RING|UNCOMMON|0":{"price":24500000,"count":4},"GENERAL_MEDALLION|RARE|0":{"price":1000000,"count":26},"BLOOD_DONOR_RING|UNCOMMON|0":{"price":2840000,"count":39},"REAPER_ORB|LEGENDARY|0":{"price":86000000,"count":5},"ANGUISH_ARTIFACT|LEGENDARY|0":{"price":60000000,"count":25},"LARGE_FISH_BOWL|RARE|0":{"price":6998998,"count":52},"RING_POTION_AFFINITY|UNCOMMON|0":{"price":190000,"count":11},"INTIMIDATION_RING|UNCOMMON|0":{"price":400000,"count":3},"DANTE_RING|COMMON|0":{"price":1890000,"count":29},"TREASURE_RING|LEGENDARY|1":{"price":17000000,"count":2},"CENTURY_ARTIFACT|EPIC|1":{"price":28000000,"count":1},"SPIDER_RING|RARE|0":{"price":390000,"count":34},"TITANIUM_RELIC|LEGENDARY|0":{"price":32999999,"count":29},"CAKE_HAT_2026|SPECIAL|0":{"price":3300000,"count":34},"ABICASE|EPIC|1":{"price":30000000,"count":2},"BALLOON_HAT_2025|SPECIAL|0":{"price":3500000,"count":32},"ANGUISH_TALISMAN|RARE|0":{"price":10599000,"count":8},"FARMING_TALISMAN|UNCOMMON|0":{"price":193000,"count":26},"KUUDRAS_KIDNEY|RARE|0":{"price":30899999,"count":3},"RAGGEDY_SHARK_TOOTH_NECKLACE|COMMON|0":{"price":80000,"count":13},"SMOOTH_CHOCOLATE_BAR|UNCOMMON|0":{"price":600000,"count":1},"CENTURY_RING|RARE|1":{"price":12000000,"count":4},"SEA_CREATURE_ARTIFACT|RARE|0":{"price":500000,"count":21},"FERMENTO_ARTIFACT|RARE|0":{"price":37000000,"count":11},"ANGUISH_RING|EPIC|0":{"price":35500000,"count":3},"PESTHUNTER_ARTIFACT|LEGENDARY|1":{"price":9000000,"count":8},"WITCH_TALISMAN|COMMON|0":{"price":1390000,"count":20},"CANDY_RELIC|LEGENDARY|0":{"price":25000000,"count":27},"PURPLE_GIFT_TALISMAN|LEGENDARY|1":{"price":11000000,"count":4},"GREAT_SPOOK_TALISMAN|COMMON|0":{"price":10000000,"count":3},"PARTY_HAT_SLOTH|SPECIAL|0":{"price":6000000,"count":24},"RING_OF_COINS|RARE|1":{"price":23000000,"count":5},"JUNK_TALISMAN|COMMON|0":{"price":800000,"count":2},"TARANTULA_TALISMAN|LEGENDARY|1":{"price":9729999,"count":1},"PESTHUNTER_ARTIFACT|EPIC|0":{"price":1700000,"count":11},"LAVA_TALISMAN|RARE|1":{"price":9400000,"count":1},"JERRY_TALISMAN_GOLDEN|LEGENDARY|0":{"price":374000000,"count":2},"NEW_YEAR_CAKE_BAG|RARE|1":{"price":9999000,"count":1},"GREAT_SPOOK_ARTIFACT|RARE|0":{"price":50000000,"count":11},"LUSH_TALISMAN|UNCOMMON|0":{"price":200000,"count":20},"COPPER_ARTIFACT|RARE|0":{"price":99000000,"count":8},"WHITE_GIFT_TALISMAN|COMMON|0":{"price":299999,"count":16},"MASTER_SKULL_TIER_1|COMMON|0":{"price":439000,"count":4},"PESTHUNTER_RELIC|LEGENDARY|0":{"price":4800000,"count":37},"ATMOSPHERIC_FILTER|EPIC|1":{"price":8000000,"count":3},"PRESTIGE_CHOCOLATE_REALM|MYTHIC|1":{"price":12999000,"count":4},"LUMBERJACK_ARTIFACT|RARE|0":{"price":3392999,"count":56},"PARTY_HAT_CRAB_ANIMATED|SPECIAL|0":{"price":11900000,"count":56},"RUNEBLADE_ARTIFACT|RARE|0":{"price":6750000,"count":6},"EXPERIENCE_ARTIFACT|EPIC|0":{"price":1200000,"count":35},"PRESTIGE_CHOCOLATE_REALM|LEGENDARY|0":{"price":2400000,"count":25},"AGARIMOO_RING|UNCOMMON|0":{"price":989000,"count":12},"PRESSURE_ARTIFACT|RARE|0":{"price":5350000,"count":55},"HEGEMONY_ARTIFACT|MYTHIC|1":{"price":545000000,"count":4},"SUNSHINE_CRYSTAL|LEGENDARY|1":{"price":14499000,"count":5},"FISH_AFFINITY_TALISMAN|EPIC|1":{"price":8390000,"count":2},"SEA_CREATURE_ARTIFACT|EPIC|1":{"price":7490000,"count":3},"NETHER_ARTIFACT|EPIC|0":{"price":54300000,"count":19},"MAGNETIC_TALISMAN|UNCOMMON|0":{"price":60000,"count":27},"SPIKED_ATROCITY|EPIC|0":{"price":68555555,"count":12},"DWARVEN_METAL|UNCOMMON|0":{"price":28990000,"count":16},"RUNEBLADE_RING|RARE|1":{"price":5000000,"count":10},"MASTER_SKULL_TIER_2|COMMON|0":{"price":499000,"count":23},"BITS_TALISMAN|RARE|0":{"price":16900000,"count":9},"TORRHUS_RING|RARE|1":{"price":7800000,"count":3},"SHENS_REGALIA|MYTHIC|1":{"price":244100000,"count":2},"BAT_PERSON_TALISMAN|COMMON|0":{"price":249000,"count":30},"INFERNAL_KUUDRA_CORE|MYTHIC|1":{"price":567911000,"count":1},"GREAT_SPOOK_ARTIFACT|EPIC|1":{"price":60000000,"count":5},"WOLF_TALISMAN|RARE|1":{"price":9788600,"count":1},"ARTIFACT_OF_CONTROL|LEGENDARY|0":{"price":1799999888,"count":6},"CENTURY_TALISMAN|COMMON|0":{"price":2700000,"count":19},"CATACOMBS_EXPERT_RING|EPIC|0":{"price":27200000,"count":45},"MAGIC_8_BALL|EPIC|0":{"price":147900000,"count":8},"CRACKED_PIGGY_BANK|UNCOMMON|0":{"price":1000000,"count":6},"INFERNAL_KUUDRA_CORE|LEGENDARY|0":{"price":570000000,"count":1},"WOLF_RING|RARE|0":{"price":1600000,"count":35},"MOONLIGHT_CRYSTAL|LEGENDARY|1":{"price":14499000,"count":4},"DRACONIC_RING|RARE|0":{"price":22800000,"count":6},"FRESHLY_BAKED_ARTIFACT|RARE|0":{"price":110000000,"count":3},"SOULFLOW_PILE|UNCOMMON|0":{"price":125000,"count":1},"HUNTER_RING|RARE|0":{"price":41500000,"count":2},"DRACONIC_ARTIFACT|EPIC|0":{"price":59290000,"count":16},"FUTURE_CALORIES|UNCOMMON|1":{"price":888000000,"count":4},"EMPEROR_TALISMAN|UNCOMMON|0":{"price":17799999,"count":3},"BINGO_TALISMAN|COMMON|0":{"price":69300000,"count":6},"TITANIUM_ARTIFACT|EPIC|0":{"price":15000000,"count":23},"TREASURE_ARTIFACT|LEGENDARY|0":{"price":72000000,"count":4},"JUNK_RING|UNCOMMON|0":{"price":2000000,"count":1},"BEASTMASTER_CREST_EPIC|EPIC|0":{"price":35000000,"count":5},"BEASTMASTER_CREST_LEGENDARY|LEGENDARY|0":{"price":85000000,"count":3},"HELIANTHUS_RELIC|EPIC|0":{"price":75999000,"count":4},"NIGHT_CRYSTAL|EPIC|1":{"price":9299999,"count":6},"CRACKED_PIGGY_BANK|RARE|1":{"price":9000000,"count":1},"HEGEMONY_ARTIFACT|LEGENDARY|0":{"price":529999999,"count":17},"BEASTMASTER_CREST_COMMON|COMMON|0":{"price":1392999,"count":6},"WITHER_RELIC|LEGENDARY|0":{"price":95420419,"count":8},"TITANIUM_RING|RARE|0":{"price":5500000,"count":12},"ETERNAL_HOOF|EPIC|1":{"price":27307220,"count":6},"SPEED_ARTIFACT|EPIC|1":{"price":12300000,"count":3},"SPIDER_TALISMAN|RARE|1":{"price":7000000,"count":3},"JERRY_TALISMAN_PURPLE|EPIC|0":{"price":83000000,"count":2},"POTATO_RING|UNCOMMON|0":{"price":31898900,"count":10},"POTATO_TALISMAN|COMMON|0":{"price":23999999,"count":13},"BLOOD_GOD_SIGIL|UNCOMMON|0":{"price":12500000,"count":19},"RAZOR_SHARP_SHARK_TOOTH_NECKLACE|LEGENDARY|0":{"price":12999998,"count":12},"WITHER_RELIC|MYTHIC|1":{"price":109000000,"count":6},"BEASTMASTER_CREST_LEGENDARY|MYTHIC|1":{"price":100000000,"count":1},"REAPER_ORB|MYTHIC|1":{"price":102000000,"count":2},"BAIT_RING|RARE|0":{"price":52000000,"count":4},"NETHER_ARTIFACT|LEGENDARY|1":{"price":65000000,"count":1},"FRESHLY_BAKED_TALISMAN|COMMON|0":{"price":27500000,"count":11},"MAGIC_8_BALL|LEGENDARY|1":{"price":162000000,"count":1},"JERRY_TALISMAN_BLUE|RARE|0":{"price":18900000,"count":4},"PERSONAL_COMPACTOR_7000|MYTHIC|1":{"price":11500000,"count":2},"EMPEROR_ARTIFACT|EPIC|0":{"price":207990000,"count":17},"SOULFLOW_BATTERY|RARE|0":{"price":1750000,"count":19},"TREASURE_RING|EPIC|0":{"price":9200000,"count":9},"SPIKED_ATROCITY|LEGENDARY|1":{"price":78000000,"count":2},"FERMENTO_ARTIFACT|EPIC|1":{"price":40000000,"count":3},"COPPER_RING|UNCOMMON|0":{"price":32000000,"count":6},"LUMBERJACK_RING|UNCOMMON|0":{"price":1100000,"count":23},"RESPIRATION_RING|UNCOMMON|0":{"price":600000,"count":33},"RED_CLAW_RING|RARE|0":{"price":1900000,"count":7},"TITANIUM_RELIC|MYTHIC|1":{"price":43000000,"count":5},"SCARF_GRIMOIRE|LEGENDARY|0":{"price":29567000,"count":4},"ENDER_RELIC|LEGENDARY|0":{"price":187999999,"count":6},"CENTURY_RING|UNCOMMON|0":{"price":5800000,"count":4},"SPEED_ARTIFACT|RARE|0":{"price":5700000,"count":24},"TARANTULA_RING|MYTHIC|1":{"price":55000000,"count":1},"FEATHER_ARTIFACT|EPIC|1":{"price":8000000,"count":1},"FEATHER_RING|UNCOMMON|0":{"price":200000,"count":1},"WITCH_RING|UNCOMMON|0":{"price":12490000,"count":14},"FRESHLY_BAKED_RING|UNCOMMON|0":{"price":47800000,"count":9},"CATACOMBS_EXPERT_RING|LEGENDARY|1":{"price":44000000,"count":4},"AUTO_RECOMBOBULATOR|MYTHIC|1":{"price":20000000,"count":1},"GOLD_GIFT_TALISMAN|MYTHIC|1":{"price":23800000,"count":4},"TRAPPER_CREST|RARE|0":{"price":10000000,"count":30},"BAT_RING|LEGENDARY|1":{"price":14000000,"count":1},"ENDER_ARTIFACT|LEGENDARY|1":{"price":190000000,"count":1},"SPIDER_ARTIFACT|LEGENDARY|1":{"price":17777777,"count":4},"BINGO_RELIC|LEGENDARY|1":{"price":1149999999,"count":4},"LUSH_ARTIFACT|LEGENDARY|1":{"price":16000000,"count":1},"BEASTMASTER_CREST_UNCOMMON|UNCOMMON|0":{"price":3970000,"count":17},"PARTY_HAT_CRAB|SPECIAL|0":{"price":30000000,"count":21},"RAZOR_SHARP_SHARK_TOOTH_NECKLACE|MYTHIC|1":{"price":29800000,"count":1},"SCARF_GRIMOIRE|MYTHIC|1":{"price":43800000,"count":1},"FRESHLY_BAKED_RELIC|EPIC|0":{"price":208500000,"count":1},"CANDY_RELIC|MYTHIC|1":{"price":43800000,"count":6},"HANDY_BLOOD_CHALICE|UNCOMMON|1":{"price":10000000,"count":1},"FUTURE_CALORIES|COMMON|0":{"price":895000000,"count":2},"ANGUISH_ARTIFACT|MYTHIC|1":{"price":80000000,"count":1},"PARTY_HAT_CRAB|VERY_SPECIAL|1":{"price":33000000,"count":4},"BINGO_RELIC|EPIC|0":{"price":1150000000,"count":5},"COPPER_ARTIFACT|EPIC|1":{"price":120000000,"count":1},"RED_CLAW_ARTIFACT|LEGENDARY|1":{"price":24999998,"count":3},"MEDIUM_FISH_BOWL|UNCOMMON|0":{"price":2900000,"count":34},"INTIMIDATION_RELIC|LEGENDARY|1":{"price":25500000,"count":5},"EMPEROR_RING|EPIC|1":{"price":65000000,"count":1},"ANITA_TALISMAN|COMMON|0":{"price":2000000,"count":2},"BEASTMASTER_CREST_EPIC|LEGENDARY|1":{"price":68990000,"count":2},"BEASTMASTER_CREST_RARE|EPIC|1":{"price":39790000,"count":2},"AGARIMOO_TALISMAN|COMMON|0":{"price":270000,"count":1},"DRACONIC_TALISMAN|UNCOMMON|0":{"price":7200000,"count":8},"FIERY_KUUDRA_CORE|EPIC|0":{"price":156142121,"count":1},"VACCINE_RING|UNCOMMON|0":{"price":5900000,"count":7},"TITANIUM_TALISMAN|RARE|1":{"price":9800000,"count":1},"MASTER_SKULL_TIER_6|LEGENDARY|1":{"price":140000000,"count":3},"BINGO_ARTIFACT|EPIC|1":{"price":715000000,"count":1},"PANDORAS_BOX|COMMON|0":{"price":427000000,"count":6},"DANTE_RING|UNCOMMON|1":{"price":12000000,"count":1},"BLOOD_GOD_SIGIL|RARE|1":{"price":32795000,"count":2},"FIERY_KUUDRA_CORE|LEGENDARY|1":{"price":167911000,"count":1},"PULSE_RING|RARE|0":{"price":11900000,"count":1},"GRATITUDE_ARTIFACT|EPIC|1":{"price":177777777,"count":1},"EMPEROR_RING|RARE|0":{"price":58400000,"count":9},"GREAT_SPOOK_TALISMAN|UNCOMMON|1":{"price":25000000,"count":1},"MASTER_SKULL_TIER_6|EPIC|0":{"price":133900000,"count":8},"RING_OF_COINS|UNCOMMON|0":{"price":21979999,"count":1},"FRESHLY_BAKED_ARTIFACT|EPIC|1":{"price":117000000,"count":3},"COPPER_RING|RARE|1":{"price":42000000,"count":2},"MOONGLADE_RING|RARE|1":{"price":8999999,"count":1},"JERRY_TALISMAN_GOLDEN|MYTHIC|1":{"price":379000000,"count":2},"PULSE_RING|LEGENDARY|1":{"price":60000000,"count":4},"GLOSSY_MINERAL_TALISMAN|EPIC|0":{"price":47999999,"count":1},"SCAVENGER_ARTIFACT|EPIC|1":{"price":250000000,"count":3},"EMERALD_RING|RARE|1":{"price":9000000,"count":1},"SHENS_REGALIA|LEGENDARY|0":{"price":256500000,"count":13},"SCAVENGER_RING|RARE|1":{"price":98500000,"count":1},"SCAVENGER_RING|UNCOMMON|0":{"price":99000000,"count":4},"AGARIMOO_RING|RARE|1":{"price":9000000,"count":1},"FRESHLY_BAKED_HEIRLOOM|MYTHIC|1":{"price":623000000,"count":4},"WITCH_ARTIFACT|RARE|0":{"price":36800000,"count":21},"TREASURE_ARTIFACT|MYTHIC|1":{"price":98000000,"count":6},"PULSE_RING|LEGENDARY|0":{"price":94999900,"count":2},"SCAVENGER_ARTIFACT|RARE|0":{"price":249999989,"count":1},"BURSTSTOPPER_ARTIFACT|EPIC|0":{"price":129880000,"count":2},"PANDORAS_BOX|MYTHIC|0":{"price":490000000,"count":7},"EMERALD_ARTIFACT|RARE|0":{"price":369989898,"count":1},"MASTER_SKULL_TIER_7|LEGENDARY|0":{"price":513900000,"count":5},"SEAL_TALISMAN|UNCOMMON|0":{"price":2589999,"count":16},"MASTER_SKULL_TIER_5|EPIC|1":{"price":129900000,"count":4},"BALLOON_HAT_2024|VERY_SPECIAL|1":{"price":20000000,"count":1},"MOONLIGHT_CRYSTAL|EPIC|0":{"price":4999999,"count":3},"PULSE_RING|EPIC|1":{"price":29500000,"count":1},"GRATITUDE_ARTIFACT|RARE|0":{"price":156998797,"count":8},"MEDIUM_FISH_BOWL|RARE|1":{"price":10600000,"count":1},"SEA_CREATURE_RING|RARE|1":{"price":8300000,"count":1},"ZOMBIE_RING|RARE|1":{"price":8200000,"count":1},"FRESHLY_BAKED_HEIRLOOM|LEGENDARY|0":{"price":624999000,"count":1},"PULSE_RING|EPIC|0":{"price":31000000,"count":3},"PULSE_RING|MYTHIC|1":{"price":120000000,"count":1},"PANDORAS_BOX|LEGENDARY|0":{"price":455999990,"count":1},"MINERAL_TALISMAN|EPIC|1":{"price":33000000,"count":1},"BURSTSTOPPER_TALISMAN|RARE|0":{"price":53999997,"count":1},"BINGO_RING|RARE|1":{"price":350000000,"count":1},"BINGO_TALISMAN|UNCOMMON|1":{"price":80000000,"count":1},"VAMPIRE_DENTIST_RELIC|LEGENDARY|0":{"price":47000000,"count":4},"BINGO_ARTIFACT|RARE|0":{"price":707500000,"count":6},"SPEED_RELIC|EPIC|0":{"price":54999999,"count":5},"PANDORAS_BOX|RARE|0":{"price":438888888,"count":1},"RELIC_OF_COINS|EPIC|0":{"price":471911000,"count":1},"BALLOON_HAT_2025|VERY_SPECIAL|1":{"price":18000000,"count":1},"BINGO_RING|UNCOMMON|0":{"price":359999888,"count":5},"RELIC_OF_COINS|LEGENDARY|1":{"price":489900000,"count":2},"TARANTULA_RING|LEGENDARY|0":{"price":48370000,"count":3},"ARTIFACT_OF_COINS|EPIC|1":{"price":104000000,"count":2},"RIFT_PRISM|RARE|0":{"price":1314999999,"count":4},"PARTY_HAT_CRAB_ANIMATED|VERY_SPECIAL|1":{"price":19999000,"count":5},"MASTER_SKULL_TIER_7|MYTHIC|1":{"price":532000000,"count":1},"CENTURY_ARTIFACT|RARE|0":{"price":18500000,"count":6},"SOULFLOW_SUPERCELL|EPIC|0":{"price":31800000,"count":3}}};</script>
+<script>/**
+ * Accessory Power (formerly "Magical Power") engine.
+ *
+ * Rules implemented, all verified against hypixelskyblock.minecraft.wiki:
+ *   - Power per rarity: Common 3, Uncommon 5, Rare 8, Epic 12, Legendary 16, Mythic 22,
+ *     Divine 28, Special 3, Very Special 5, Ultimate 1.
+ *   - Only the highest-power accessory in an upgrade family counts; duplicates never stack.
+ *   - Hegemony Artifact grants double power.
+ *   - Rift Prism grants 11 once imbued at Erihann (not its Rare 8).
+ *   - Abicase grants its rarity power PLUS 1 per 2 Abiphone contacts.
+ *   - Celestial Starstone (CRUX_TALISMAN_7) grants NO power, despite topping the Crux family.
+ *   - Recombobulator 3000 raises rarity by one step, capped at Mythic.
+ *   - Stat multiplier = 29.97 * (ln(0.0019 * AP + 1)) ^ 1.2
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  else root.MP = api;
+})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+
+  /** Power a single accessory contributes, given whether it's recombobulated. */
+  function powerOf(cat, acc, recombobulated, contacts) {
+    let rarity = acc.rarity;
+    if (recombobulated && acc.recombable) {
+      const i = cat.rules.ladder.indexOf(rarity);
+      if (i >= 0 && i < cat.rules.ladder.length - 1) rarity = cat.rules.ladder[i + 1];
+    }
+    let mp = acc.id in cat.rules.overrides ? cat.rules.overrides[acc.id] : (cat.rules.mpByRarity[rarity] ?? 0);
+    if (acc.dynamic === "double") mp *= 2;
+    if (acc.dynamic === "abiphone") mp += Math.floor((contacts || 0) / 2);
+    return mp;
+  }
+
+  /** The rarity an accessory ends up at once recombobulated. */
+  function recombRarity(cat, acc) {
+    const i = cat.rules.ladder.indexOf(acc.rarity);
+    return acc.recombable && i >= 0 && i < cat.rules.ladder.length - 1 ? cat.rules.ladder[i + 1] : null;
+  }
+
+  function multiplier(ap) {
+    if (ap <= 0) return 0;
+    return 29.97 * Math.pow(Math.log(0.0019 * ap + 1), 1.2);
+  }
+
+  /**
+   * What the player has right now.
+   * owned: { [id]: { recomb: boolean } }
+   */
+  function evaluate(cat, owned, opts) {
+    const contacts = opts?.contacts || 0;
+    const byId = cat.byId;
+    const families = [];
+    let total = 0;
+
+    for (const [key, fam] of Object.entries(cat.families)) {
+      let best = null;
+      for (const id of fam.members) {
+        const has = owned[id];
+        if (!has) continue;
+        const mp = powerOf(cat, byId[id], !!has.recomb, contacts);
+        if (!best || mp > best.mp) best = { id, mp, recomb: !!has.recomb };
+      }
+      // Everything you own in this family beyond `best` is dead weight.
+      const ownedIds = fam.members.filter((id) => owned[id]);
+      if (best) {
+        total += best.mp;
+        families.push({ key, name: fam.name, best, ownedIds, wasted: ownedIds.filter((id) => id !== best.id) });
+      }
+    }
+
+    return { total, multiplier: multiplier(total), families, contacts };
+  }
+
+  /**
+   * Every way to raise accessory power, priced.
+   *
+   * prices: { lowestBin: { "ID|RARITY|RECOMB": {price,count} }, recombobulator: {buy} }
+   * Returns one entry per (family, achievable target), each with the cheapest route.
+   */
+  function offers(cat, owned, prices, opts) {
+    const contacts = opts?.contacts || 0;
+    const includeRecomb = opts?.includeRecomb !== false;
+    const byId = cat.byId;
+    const low = prices?.lowestBin || {};
+    const recombCost = prices?.recombobulator?.buy ?? null;
+    const out = [];
+
+    for (const [key, fam] of Object.entries(cat.families)) {
+      // Current power from this family.
+      let current = 0, currentId = null;
+      for (const id of fam.members) {
+        if (!owned[id]) continue;
+        const mp = powerOf(cat, byId[id], !!owned[id].recomb, contacts);
+        if (mp > current) { current = mp; currentId = id; }
+      }
+
+      const candidates = [];
+      for (const id of fam.members) {
+        const acc = byId[id];
+        const has = owned[id];
+
+        // Route A — plain copy at base rarity.
+        const plain = low[`${id}|${acc.rarity}|0`];
+        if (!has && plain) {
+          candidates.push({ id, rarity: acc.rarity, recomb: false, cost: plain.price, listings: plain.count, route: "buy" });
+        }
+
+        if (!includeRecomb || !acc.recombable) continue;
+        const up = recombRarity(cat, acc);
+        if (!up) continue;
+
+        // Route B — buy one already recombobulated.
+        const pre = low[`${id}|${up}|1`];
+        if (!has && pre) {
+          candidates.push({ id, rarity: up, recomb: true, cost: pre.price, listings: pre.count, route: "buy-recombobulated" });
+        }
+
+        // Route C — buy plain, apply your own Recombobulator 3000.
+        if (!has && plain && recombCost) {
+          candidates.push({ id, rarity: up, recomb: true, cost: plain.price + recombCost, listings: plain.count, route: "buy+recombobulate" });
+        }
+
+        // Route D — you already own it un-recombobulated; just recombobulate it.
+        if (has && !has.recomb && recombCost) {
+          candidates.push({ id, rarity: up, recomb: true, cost: recombCost, listings: null, route: "recombobulate-owned" });
+        }
+      }
+
+      // Collapse to the cheapest route per resulting power level.
+      const bestByMp = new Map();
+      for (const c of candidates) {
+        const mp = powerOf(cat, byId[c.id], c.recomb, contacts);
+        if (mp <= current) continue; // no gain
+        const prev = bestByMp.get(mp);
+        if (!prev || c.cost < prev.cost) bestByMp.set(mp, { ...c, mp });
+      }
+
+      for (const c of bestByMp.values()) {
+        out.push({
+          family: key,
+          familyName: fam.name,
+          id: c.id,
+          name: byId[c.id].name,
+          rarity: c.rarity,
+          recomb: c.recomb,
+          route: c.route,
+          listings: c.listings,
+          cost: c.cost,
+          fromMp: current,
+          fromId: currentId,
+          toMp: c.mp,
+          gain: c.mp - current,
+          coinsPerMp: c.cost / (c.mp - current),
+        });
+      }
+    }
+
+    out.sort((a, b) => a.coinsPerMp - b.coinsPerMp);
+    return out;
+  }
+
+  /** Only the highest-power offer for each family (the "get me to max tier" list). */
+  function maxTierOffers(all) {
+    const best = new Map();
+    for (const o of all) {
+      const prev = best.get(o.family);
+      if (!prev || o.toMp > prev.toMp || (o.toMp === prev.toMp && o.cost < prev.cost)) best.set(o.family, o);
+    }
+    return [...best.values()].sort((a, b) => a.coinsPerMp - b.coinsPerMp);
+  }
+
+  /**
+   * Greedy budget solver. Each family can be bought at most once, so we repeatedly
+   * take the best coins-per-power offer that still fits, then drop that family.
+   * Greedy is an approximation, not a proven optimum — the UI says so.
+   */
+  function solveBudget(all, budget) {
+    const pool = [...all].sort((a, b) => a.coinsPerMp - b.coinsPerMp);
+    const used = new Set();
+    const picks = [];
+    let spend = 0, gain = 0;
+
+    for (const o of pool) {
+      if (used.has(o.family)) continue;
+      if (spend + o.cost > budget) continue;
+      used.add(o.family);
+      picks.push(o);
+      spend += o.cost;
+      gain += o.gain;
+    }
+    return { picks, spend, gain };
+  }
+
+  /** Accessories you can't buy — they have to be earned. Sorted by power on offer. */
+  function earnable(cat, owned, prices, opts) {
+    const contacts = opts?.contacts || 0;
+    const low = prices?.lowestBin || {};
+    const byId = cat.byId;
+    const out = [];
+
+    for (const [key, fam] of Object.entries(cat.families)) {
+      let current = 0;
+      for (const id of fam.members) {
+        if (!owned[id]) continue;
+        current = Math.max(current, powerOf(cat, byId[id], !!owned[id].recomb, contacts));
+      }
+      let best = null;
+      for (const id of fam.members) {
+        const acc = byId[id];
+        if (owned[id]) continue;
+        const purchasable = Object.keys(low).some((k) => k.startsWith(id + "|"));
+        if (purchasable) continue;
+        const mp = powerOf(cat, acc, false, contacts);
+        if (mp > current && (!best || mp > best.mp)) best = { id, mp, acc };
+      }
+      if (best) {
+        out.push({
+          family: key, familyName: fam.name, id: best.id, name: best.acc.name,
+          rarity: best.acc.rarity, gain: best.mp - current, toMp: best.mp,
+          rift: best.acc.rift, soulbound: best.acc.soulbound, dungeon: best.acc.dungeon,
+        });
+      }
+    }
+    out.sort((a, b) => b.gain - a.gain);
+    return out;
+  }
+
+  /** Index a raw accessories.json for fast lookup. */
+  function index(doc) {
+    return { ...doc, byId: Object.fromEntries(doc.accessories.map((a) => [a.id, a])) };
+  }
+
+  return { index, powerOf, recombRarity, multiplier, evaluate, offers, maxTierOffers, solveBudget, earnable };
+});
+</script>
+<script>/* Accessory Power Ledger — shared UI for both targets.
+ *
+ * Data arrives one of two ways:
+ *   inlined  — window.__CATALOGUE__ / window.__PRICES__ (hosted single-file build)
+ *   fetched  — data/accessories.json + /api/prices        (local server)
+ *
+ * Live refresh pulls current BIN listings straight from Coflnet in the browser, so
+ * any host that permits outbound fetches gets live Auction House prices. The published
+ * Artifact runs under a CSP that blocks every external host, so there the button
+ * reports that and the baked snapshot stands.
+ */
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const LS = { owned: "apl:owned", contacts: "apl:contacts", budget: "apl:budget", prices: "apl:prices", seen: "apl:seen" };
+  const COFL = "https://sky.coflnet.com/api";
+  const PRICE_TTL = 30 * 60 * 1000;
+
+  let cat = null;
+  let prices = null;
+
+  const state = {
+    owned: load(LS.owned, {}),
+    contacts: Number(load(LS.contacts, 0)) || 0,
+    tab: "value",
+    search: "",
+    bagSearch: "",
+    sort: "rate",
+    sortDir: 1,
+    bagOrder: [],       // frozen while the bag tab is open, so ticking never reorders under the cursor
+    liveState: "idle",
+  };
+
+  /* ---------------- storage ---------------- */
+
+  function load(k, fb) {
+    try { const v = localStorage.getItem(k); return v == null ? fb : JSON.parse(v); } catch { return fb; }
+  }
+  function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } }
+
+  /* ---------------- format ---------------- */
+
+  const coins = (n) => {
+    if (n == null || !isFinite(n)) return "—";
+    const a = Math.abs(n);
+    if (a >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, "") + "B";
+    if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e8 ? 0 : 1).replace(/\.0$/, "") + "M";
+    if (a >= 1e3) return Math.round(n / 1e3) + "k";
+    return String(Math.round(n));
+  };
+
+  const parseCoins = (s) => {
+    const m = String(s).trim().toLowerCase().replace(/[, ]/g, "").match(/^([\d.]+)\s*([kmb])?$/);
+    return m ? parseFloat(m[1]) * ({ k: 1e3, m: 1e6, b: 1e9 }[m[2]] || 1) : NaN;
+  };
+
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
+
+  const ROUTE = {
+    "buy": "buy it",
+    "buy-recombobulated": "buy one already recombobulated",
+    "buy+recombobulate": "buy it, then recombobulate",
+    "recombobulate-owned": "recombobulate the one you own",
+  };
+
+  const rarityVar = (r) => `var(--r-${String(r).toLowerCase()}, var(--r-common))`;
+  const ago = (ms) => {
+    const s = Math.max(0, (Date.now() - ms) / 1000);
+    if (s < 90) return Math.round(s) + "s ago";
+    if (s < 5400) return Math.round(s / 60) + "m ago";
+    if (s < 172800) return Math.round(s / 3600) + "h ago";
+    return Math.round(s / 86400) + "d ago";
+  };
+
+  /* ---------------- boot ---------------- */
+
+  async function boot() {
+    cat = MP.index(window.__CATALOGUE__ || await (await fetch("data/accessories.json")).json());
+
+    const cached = load(LS.prices, null);
+    if (cached && cached.lowestBin && Date.now() - cached.generated < PRICE_TTL) prices = cached;
+    else prices = window.__PRICES__ || null;
+
+    if (!prices) {
+      try { prices = await (await fetch("/api/prices")).json(); } catch { prices = { generated: 0, lowestBin: {} }; }
+    }
+
+    $("contacts").value = state.contacts;
+    $("budget").value = load(LS.budget, "100m");
+    wire();
+    stamp();
+    render();
+
+    // Local server already has a full live sweep; only the hosted build needs to reach out.
+    if (!window.__PRICES__ && prices.lowestBin && Object.keys(prices.lowestBin).length) return;
+  }
+
+  function stamp() {
+    const n = Object.keys(prices.lowestBin || {}).length;
+    const age = prices.generated ? Date.now() - prices.generated : Infinity;
+    const led = $("led");
+    led.className = "led" + (state.liveState === "busy" ? " busy" : age > 6 * 3600e3 ? " stale" : "");
+    $("stampText").textContent = state.liveState === "busy"
+      ? "fetching live prices…"
+      : `${n} listings · ${prices.generated ? ago(prices.generated) : "snapshot"}`;
+    $("footFresh").textContent = prices.source === "live"
+      ? `Prices fetched live from current Auction House BIN listings, ${ago(prices.generated)}.`
+      : `Prices are a baked snapshot. Hit “Live prices” for current Auction House listings — where the host allows it.`;
+  }
+
+  /* ---------------- live prices ---------------- */
+
+  async function refreshLive() {
+    if (state.liveState === "busy") return;
+    const ids = cat.accessories.filter((a) => a.tradeable).map((a) => a.id);
+    state.liveState = "busy";
+    $("liveBtn").disabled = true;
+    $("progress").hidden = false;
+    stamp();
+
+    const lowestBin = Object.create(null);
+    let done = 0, ok = 0, failed = 0;
+    let blocked = false;
+
+    // Coflnet drops connections under sustained parallelism. Measured over all 305
+    // accessories: 5-wide got 83 through, 3-wide with two retries got 290 in 18s.
+    const CONCURRENCY = 3;
+    const RETRIES = 2;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const queue = [...ids];
+    const worker = async () => {
+      while (queue.length && !blocked) {
+        const id = queue.shift();
+        let list = null;
+
+        for (let attempt = 0; attempt <= RETRIES && !list; attempt++) {
+          if (attempt) await sleep(300 * attempt * attempt);
+          try {
+            const r = await fetch(`${COFL}/auctions/tag/${id}/active/bin`);
+            if (r.ok) list = await r.json();
+          } catch { /* transient — retry */ }
+        }
+
+        if (list) {
+          ok++;
+          const base = cat.byId[id].rarity;
+          for (const a of list) {
+            if (a.bin === false) continue;
+            // Coflnet reports the listing's effective tier, so a rarity above the item's
+            // base rarity is exactly what a recombobulated copy looks like.
+            const tier = a.tier || base;
+            const recomb = tier !== base ? 1 : 0;
+            const key = `${id}|${tier}|${recomb}`;
+            const cur = lowestBin[key];
+            if (!cur) lowestBin[key] = { price: a.startingBid, count: 1 };
+            else { cur.count++; if (a.startingBid < cur.price) cur.price = a.startingBid; }
+          }
+        } else {
+          failed++;
+          // A CSP refusal fails every request instantly; stop rather than grind through 305.
+          if (failed >= 5 && ok === 0) blocked = true;
+        }
+
+        done++;
+        $("progressFill").style.width = ((done / ids.length) * 100).toFixed(1) + "%";
+        $("stampText").textContent = `fetching live prices… ${done}/${ids.length}`;
+      }
+    };
+
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
+    // Recombobulator price keeps the "recombobulate what you own" route honest.
+    let recombobulator = prices.recombobulator || null;
+    if (!blocked) {
+      try {
+        const r = await fetch(`${COFL}/item/price/RECOMBOBULATOR_3000/current`);
+        if (r.ok) { const j = await r.json(); if (j.buy) recombobulator = { buy: j.buy, sell: j.sell }; }
+      } catch { /* keep the snapshot value */ }
+    }
+
+    state.liveState = "idle";
+    $("liveBtn").disabled = false;
+    $("progress").hidden = true;
+    $("progressFill").style.width = "0%";
+
+    if (blocked || ok === 0) {
+      note("Live prices are blocked on this page — the published Artifact runs under a policy that forbids "
+        + "calls to other sites. The snapshot below still works. Run the local copy for live Auction House data.", "warn");
+      stamp();
+      return;
+    }
+
+    prices = { generated: Date.now(), source: "live", recombobulator, lowestBin };
+    save(LS.prices, prices);
+    note(`Live prices in: ${Object.keys(lowestBin).length} listings across ${ok} accessories.`
+      + (failed ? ` ${failed} could not be reached.` : ""), "good");
+    stamp();
+    render();
+  }
+
+  function note(text, kind) {
+    const n = $("note");
+    n.textContent = text;
+    n.className = "callout " + (kind || "");
+    n.hidden = false;
+    clearTimeout(note._t);
+    note._t = setTimeout(() => { n.hidden = true; }, 9000);
+  }
+
+  /* ---------------- derive ---------------- */
+
+  function derive() {
+    const opts = { contacts: state.contacts, includeRecomb: $("useRecomb").checked };
+    const evalNow = MP.evaluate(cat, state.owned, opts);
+    const all = MP.offers(cat, state.owned, prices, opts);
+    return { opts, evalNow, all, maxTier: MP.maxTierOffers(all), earn: MP.earnable(cat, state.owned, prices, opts) };
+  }
+
+  function ceiling(opts) {
+    let total = 0;
+    for (const fam of Object.values(cat.families)) {
+      total += Math.max(...fam.members.map((id) => {
+        const a = cat.byId[id];
+        return MP.powerOf(cat, a, opts.includeRecomb && a.recombable, state.contacts);
+      }));
+    }
+    return total;
+  }
+
+  const SORTS = {
+    rate: (a, b) => a.coinsPerMp - b.coinsPerMp,
+    cost: (a, b) => a.cost - b.cost,
+    gain: (a, b) => b.gain - a.gain,
+    name: (a, b) => a.name.localeCompare(b.name),
+  };
+
+  function applyView(list) {
+    const q = state.search.trim().toLowerCase();
+    let out = q ? list.filter((o) => o.name.toLowerCase().includes(q) || o.familyName.toLowerCase().includes(q)) : list.slice();
+    out.sort(SORTS[state.sort] || SORTS.rate);
+    if (state.sortDir < 0) out.reverse();
+    return out;
+  }
+
+  /* ---------------- rows ---------------- */
+
+  function header(target) {
+    const h = el("div", "lhead");
+    h.append(el("span", "h-edge"));
+    h.append(el("span", "h-idx"));
+    const cols = [["name", "Accessory", "h-name"], ["gain", "Power", ""], ["cost", "Price", ""], ["rate", "Per AP", "h-rate"]];
+    for (const [key, label, cls] of cols) {
+      const b = el("button", cls);
+      b.type = "button";
+      b.append(document.createTextNode(label));
+      const active = state.sort === key;
+      b.setAttribute("aria-sort", active ? (state.sortDir > 0 ? "ascending" : "descending") : "none");
+      if (active) b.append(el("span", "arrow", state.sortDir > 0 ? "▲" : "▼"));
+      b.addEventListener("click", () => {
+        if (state.sort === key) state.sortDir *= -1;
+        else { state.sort = key; state.sortDir = 1; }
+        render();
+      });
+      h.append(b);
+    }
+    target.append(h);
+  }
+
+  function entry(o, i) {
+    const row = el("div", "entry");
+    const edge = el("div", "edge");
+    edge.style.background = rarityVar(o.rarity);
+    row.append(edge, el("div", "idx", i == null ? "" : String(i + 1)));
+
+    const body = el("div", "body");
+    const l1 = el("div", "line1");
+    l1.append(el("span", "iname", o.name));
+    const rar = el("span", "rarity", String(o.rarity).replace("_", " "));
+    rar.style.color = rarityVar(o.rarity);
+    l1.append(rar);
+    if (o.recomb) l1.append(el("span", "chip recomb", "recombobulated"));
+    if (o.familyName && o.familyName !== o.name) l1.append(el("span", "line-of", o.familyName + " line"));
+    body.append(l1);
+
+    const l2 = el("div", "line2");
+    l2.append(el("span", null, ROUTE[o.route] || o.route));
+    if (o.fromMp > 0) { l2.append(el("span", "sep", "·")); l2.append(el("span", null, `${o.fromMp} → ${o.toMp} in this line`)); }
+    if (o.listings) { l2.append(el("span", "sep", "·")); l2.append(el("span", null, `${o.listings} listed`)); }
+    body.append(l2);
+    row.append(body);
+
+    row.append(el("div", "num c-power", "+" + o.gain));
+    row.append(el("div", "num c-price", coins(o.cost)));
+    row.append(el("div", "num c-rate", coins(o.coinsPerMp)));
+    return row;
+  }
+
+  function fill(node, list, make, emptyText) {
+    node.textContent = "";
+    if (!list.length) { node.append(el("div", "empty", emptyText)); return; }
+    list.forEach((x, i) => node.append(make(x, i)));
+  }
+
+  /* ---------------- render ---------------- */
+
+  const CAP = 150;
+
+  function render() {
+    // Full re-render nukes focus; put it back where the keyboard user left it.
+    const active = document.activeElement;
+    const focusKey = active && active.dataset ? active.dataset.focusKey : null;
+
+    const d = derive();
+    renderStrip(d);
+    renderCounts(d);
+    renderValue(d);
+    renderMax(d);
+    renderPlan(d);
+    renderEarn(d);
+    renderFree(d);
+    renderBag();
+    renderOnboard(d);
+
+    if (focusKey) {
+      const back = document.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`);
+      if (back) back.focus({ preventScroll: true });
+    }
+  }
+
+  function renderCounts(d) {
+    const set = (tab, n) => { const e = document.querySelector(`.tab[data-tab="${tab}"] .count`); if (e) e.textContent = n; };
+    set("value", d.all.length);
+    set("max", d.maxTier.length);
+    set("earn", d.earn.length);
+    set("bag", Object.keys(state.owned).length);
+  }
+
+  function renderStrip({ evalNow, opts }) {
+    const max = ceiling(opts);
+    const held = Object.keys(state.owned).length;
+    $("ap").textContent = evalNow.total.toLocaleString();
+    $("apSub").textContent = held ? `${evalNow.families.length} families contributing` : "tick what you own to personalise";
+    $("mult").textContent = "×" + evalNow.multiplier.toFixed(2);
+    $("held").textContent = held.toLocaleString();
+    $("heldSub").textContent = `of ${cat.accessories.length} in the game`;
+    $("headroom").textContent = Math.max(0, max - evalNow.total).toLocaleString();
+    $("headroomSub").textContent = `ceiling ${max.toLocaleString()} AP`;
+    $("meter").style.width = (max ? Math.min(100, (evalNow.total / max) * 100) : 0).toFixed(1) + "%";
+  }
+
+  function renderOnboard({ evalNow }) {
+    const box = $("onboard");
+    const dismissed = load(LS.seen, false);
+    box.hidden = dismissed || Object.keys(state.owned).length > 0;
+  }
+
+  function renderValue({ all }) {
+    const node = $("valueList");
+    node.textContent = "";
+    header(node);
+    const view = applyView(all);
+    const body = el("div", "ledger");
+    fill(body, view.slice(0, CAP), entry,
+      state.search ? "No upgrade matches that search." : "Nothing left to buy — every purchasable family is at its best tier.");
+    node.append(body);
+    if (view.length > CAP) node.append(el("div", "empty", `Showing ${CAP} of ${view.length}. Narrow it with the search box.`));
+  }
+
+  function renderMax({ maxTier }) {
+    const node = $("maxList");
+    node.textContent = "";
+    const view = applyView(maxTier);
+    if (view.length) {
+      const total = view.reduce((n, o) => n + o.cost, 0);
+      const gain = view.reduce((n, o) => n + o.gain, 0);
+      const head = el("div", "callout good");
+      head.append(el("h3", null, `All ${view.length} top tiers: ${coins(total)} for ${gain.toLocaleString()} AP`));
+      head.append(el("p", null, "Every family at the highest tier currently listed. The rest of the ceiling is locked behind things coins cannot buy — see “Can’t buy”."));
+      node.append(head, el("div", "note"));
+    }
+    header(node);
+    const body = el("div", "ledger");
+    fill(body, view, entry, "Every purchasable family is already maxed.");
+    node.append(body);
+  }
+
+  function renderPlan({ all, evalNow }) {
+    const budget = parseCoins($("budget").value);
+    const sum = $("planSummary");
+    sum.textContent = "";
+    if (!isFinite(budget)) {
+      sum.append(el("div", "empty", "Enter a budget like 250m or 1.5b."));
+      $("planList").textContent = "";
+      return;
+    }
+    const s = MP.solveBudget(all, budget);
+    const after = evalNow.total + s.gain;
+    const cell = (label, value, sub) => {
+      const c = el("div", "cell");
+      c.append(el("div", "cell-label", label), el("div", "cell-value", value), el("div", "cell-sub", sub));
+      return c;
+    };
+    sum.append(cell("Budget", coins(budget), `${s.picks.length} purchases fit`));
+    sum.append(cell("Spends", coins(s.spend), coins(budget - s.spend) + " left over"));
+    sum.append(cell("Power gained", "+" + s.gain.toLocaleString(), s.gain ? coins(s.spend / s.gain) + " per AP" : "—"));
+    sum.append(cell("Ends at", after.toLocaleString() + " AP", `×${MP.multiplier(after).toFixed(2)} from ×${evalNow.multiplier.toFixed(2)}`));
+
+    const node = $("planList");
+    node.textContent = "";
+    header(node);
+    const body = el("div", "ledger");
+    fill(body, s.picks, entry, "Nothing fits that budget — the cheapest upgrade costs more.");
+    node.append(body);
+  }
+
+  function renderEarn({ earn }) {
+    fill($("earnList"), earn, (e, i) => {
+      const row = el("div", "entry");
+      const edge = el("div", "edge");
+      edge.style.background = rarityVar(e.rarity);
+      row.append(edge, el("div", "idx", String(i + 1)));
+      const body = el("div", "body");
+      const l1 = el("div", "line1");
+      l1.append(el("span", "iname", e.name));
+      const rar = el("span", "rarity", String(e.rarity).replace("_", " "));
+      rar.style.color = rarityVar(e.rarity);
+      l1.append(rar);
+      if (e.rift) l1.append(el("span", "chip rift", "rift"));
+      if (e.soulbound) l1.append(el("span", "chip soul", "soulbound " + String(e.soulbound).toLowerCase()));
+      if (e.dungeon) l1.append(el("span", "chip dungeon", "dungeon"));
+      body.append(l1, el("div", "line2", "no auction listings — has to be earned"));
+      row.append(body);
+      row.append(el("div", "num c-power", "+" + e.gain));
+      row.append(el("div", "num c-price", "free"));
+      row.append(el("div", "num c-rate", "—"));
+      return row;
+    }, "Nothing here.");
+  }
+
+  function renderFree({ evalNow, all }) {
+    const node = $("freeList");
+    node.textContent = "";
+    const tips = [];
+    const known = cat.rules.abiphoneContactsKnown;
+
+    if (state.owned.ABICASE) {
+      const now = Math.floor(state.contacts / 2);
+      const room = Math.floor(known / 2) - now;
+      if (room > 0) tips.push(["good", "Add Abiphone contacts — the cheapest power there is",
+        `Your Abicase turns every 2 contacts into 1 Accessory Power. At ${state.contacts} contacts you get +${now} AP. `
+        + `There are ${known} contacts in the game, so ${room} more AP is sitting there for the price of a few conversations.`]);
+    } else {
+      tips.push(["", "Get an Abicase",
+        `The strongest single accessory for power: 8 from its rarity plus 1 per 2 Abiphone contacts — about +${Math.floor(known / 2)} more once stocked.`]);
+    }
+
+    if (!state.owned.RIFT_PRISM) tips.push(["", "Imbue the Rift Prism (+11 AP)",
+      "A flat 11 Accessory Power once imbued at Erihann in the Rift — more than a Legendary accessory, and an errand rather than a purchase."]);
+
+    const wasted = evalNow.families.filter((f) => f.wasted.length);
+    if (wasted.length) {
+      const n = wasted.reduce((a, f) => a + f.wasted.length, 0);
+      tips.push(["warn", n === 1 ? "1 accessory in your bag is contributing nothing" : `${n} accessories in your bag are contributing nothing`,
+        "Only the highest-power accessory in each line counts, so these are dead weight you could sell: "
+        + wasted.slice(0, 8).map((f) => f.wasted.map((id) => cat.byId[id].name).join(", ")).join("; ") + (wasted.length > 8 ? ", and more." : ".")]);
+    }
+
+    if (state.owned.CRUX_TALISMAN_7 || state.owned.CRUX_TALISMAN_6) tips.push(["warn", "Do not upgrade the Crux line past the Chronomicon",
+      "The Celestial Starstone tops the Crux tree and grants no Accessory Power at all. The Crux Chronomicon below it gives 22, so the “upgrade” costs you 22 AP."
+      + (state.owned.CRUX_TALISMAN_7 && !state.owned.CRUX_TALISMAN_6 ? " You hold the Starstone right now and get nothing from that line." : "")]);
+
+    const recombs = all.filter((o) => o.route === "recombobulate-owned");
+    if (recombs.length && prices.recombobulator) {
+      const best = recombs.slice().sort((a, b) => a.coinsPerMp - b.coinsPerMp)[0];
+      tips.push(["", "Recombobulate what is already in your bag",
+        `A Recombobulator 3000 runs about ${coins(prices.recombobulator.buy)} and lifts one accessory a full rarity. `
+        + `Best candidate: ${best.name}, +${best.gain} AP for ${coins(best.cost)}. ${recombs.length} of your accessories could take one.`]);
+    }
+
+    tips.push(["", "Dungeon accessories count double in dungeons",
+      "Anything flagged as a dungeon item contributes twice its power inside the Catacombs. Every figure here is overworld power, the conservative number."]);
+
+    for (const [kind, head, text] of tips) {
+      const c = el("div", "callout" + (kind ? " " + kind : ""));
+      c.append(el("h3", null, head), el("p", null, text));
+      node.append(c);
+    }
+  }
+
+  function bagList() {
+    const q = state.bagSearch.trim().toLowerCase();
+    // Order is frozen per tab-entry so ticking a box never moves rows under the pointer.
+    if (!state.bagOrder.length) {
+      state.bagOrder = cat.accessories.slice()
+        .sort((a, b) => (state.owned[b.id] ? 1 : 0) - (state.owned[a.id] ? 1 : 0) || a.name.localeCompare(b.name))
+        .map((a) => a.id);
+    }
+    const list = state.bagOrder.map((id) => cat.byId[id]).filter(Boolean);
+    return q ? list.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q)) : list;
+  }
+
+  function renderBag() {
+    const list = bagList();
+    $("bagCount").textContent = `${Object.keys(state.owned).length} owned · ${list.length} shown`;
+
+    fill($("bagList"), list.slice(0, 300), (a) => {
+      const has = state.owned[a.id];
+      const row = el("div", "entry pick" + (has ? " own" : ""));
+      const edge = el("div", "edge");
+      edge.style.background = rarityVar(a.rarity);
+      row.append(edge);
+
+      const box = el("input", "own-box");
+      box.type = "checkbox";
+      box.checked = !!has;
+      box.dataset.focusKey = "own:" + a.id;
+      box.setAttribute("aria-label", "I own " + a.name);
+      box.addEventListener("change", () => {
+        if (box.checked) state.owned[a.id] = { recomb: false };
+        else delete state.owned[a.id];
+        save(LS.owned, state.owned);
+        render();
+      });
+      row.append(box);
+
+      const body = el("div", "body");
+      const l1 = el("div", "line1");
+      l1.append(el("span", "iname", a.name));
+      const rar = el("span", "rarity", String(a.rarity).replace("_", " "));
+      rar.style.color = rarityVar(a.rarity);
+      l1.append(rar);
+      if (a.rift) l1.append(el("span", "chip rift", "rift"));
+      if (a.soulbound) l1.append(el("span", "chip soul", "soulbound"));
+      body.append(l1);
+
+      const fam = cat.families[a.family];
+      const l2 = el("div", "line2");
+      l2.append(el("span", null, `${MP.powerOf(cat, a, has && has.recomb, state.contacts)} AP`));
+      if (fam && fam.members.length > 1) { l2.append(el("span", "sep", "·")); l2.append(el("span", null, `${fam.name} line, ${fam.members.length} tiers`)); }
+      body.append(l2);
+      row.append(body);
+
+      if (has && a.recombable) {
+        const lab = el("label", "recomb-tick");
+        lab.title = "Recombobulated";
+        const t = el("input");
+        t.type = "checkbox";
+        t.checked = !!has.recomb;
+        t.dataset.focusKey = "recomb:" + a.id;
+        t.setAttribute("aria-label", a.name + " is recombobulated");
+        t.addEventListener("change", () => {
+          state.owned[a.id] = { recomb: t.checked };
+          save(LS.owned, state.owned);
+          render();
+        });
+        lab.append(t, el("span", null, "recomb"));
+        row.append(lab);
+      } else {
+        row.append(el("div"));
+      }
+      return row;
+    }, "No accessory matches that search.");
+  }
+
+  /* ---------------- tabs ---------------- */
+
+  const TABS = ["value", "max", "plan", "earn", "free", "bag"];
+
+  function selectTab(name) {
+    state.tab = name;
+    if (name === "bag") state.bagOrder = [];   // re-sort only on entry
+    for (const t of document.querySelectorAll(".tab")) {
+      const on = t.dataset.tab === name;
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
+    }
+    for (const p of document.querySelectorAll('[role="tabpanel"]')) p.hidden = p.id !== "panel-" + name;
+    $("searchWrap").hidden = !(name === "value" || name === "max");
+    if (name === "bag") renderBag();
+  }
+
+  function wire() {
+    const tabs = $("tabs");
+    tabs.addEventListener("click", (e) => {
+      const t = e.target.closest(".tab");
+      if (t) selectTab(t.dataset.tab);
+    });
+    // Roving tabindex: role="tab" promises arrow-key navigation, so implement it.
+    tabs.addEventListener("keydown", (e) => {
+      const i = TABS.indexOf(state.tab);
+      let next = null;
+      if (e.key === "ArrowRight") next = TABS[(i + 1) % TABS.length];
+      else if (e.key === "ArrowLeft") next = TABS[(i - 1 + TABS.length) % TABS.length];
+      else if (e.key === "Home") next = TABS[0];
+      else if (e.key === "End") next = TABS[TABS.length - 1];
+      if (!next) return;
+      e.preventDefault();
+      selectTab(next);
+      document.querySelector(`.tab[data-tab="${next}"]`).focus();
+    });
+
+    $("budget").addEventListener("input", () => { save(LS.budget, $("budget").value); render(); });
+    $("contacts").addEventListener("input", () => {
+      const max = cat.rules.abiphoneContactsKnown;
+      const raw = Number($("contacts").value) || 0;
+      state.contacts = Math.min(max, Math.max(0, raw));   // unclamped input would poison every ranking
+      if (raw > max) $("contacts").value = state.contacts;
+      save(LS.contacts, state.contacts);
+      render();
+    });
+    $("useRecomb").addEventListener("change", render);
+    $("search").addEventListener("input", () => { state.search = $("search").value; render(); });
+    $("bagSearch").addEventListener("input", () => { state.bagSearch = $("bagSearch").value; renderBag(); });
+    $("bagClear").addEventListener("click", () => {
+      state.owned = {};
+      state.bagOrder = [];
+      save(LS.owned, state.owned);
+      render();
+    });
+    $("liveBtn").addEventListener("click", refreshLive);
+    $("startBtn").addEventListener("click", () => { selectTab("bag"); $("bagSearch").focus(); });
+    $("skipBtn").addEventListener("click", () => { save(LS.seen, true); $("onboard").hidden = true; });
+
+    selectTab("value");
+  }
+
+  boot();
+})();
+</script>
