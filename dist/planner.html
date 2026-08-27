@@ -1122,20 +1122,36 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     const free = capacity ? Math.max(0, capacity - held) + dead.length : Infinity;
     const full = capacity > 0 && free <= 0;
 
-    const reachable = offers(cat, owned, prices, opts).filter((o) => !o.locked);
+    // The rest of the app hides what the player cannot obtain unless they ask to see it;
+    // this view was filtering unconditionally, so the toggle did nothing on a full bag.
+    const hideLocked = opts?.hideLocked !== false;
+    const reachable = offers(cat, owned, prices, opts).filter((o) => !hideLocked || !o.locked);
     // fromMp > 0 means this family already contributes, so the purchase replaces a member
     // rather than claiming a new slot.
     const upgrades = reachable.filter((o) => o.fromMp > 0);
     const additions = reachable.filter((o) => o.fromMp === 0);
 
+
     // The weakest things in the bag are what a brand-new accessory would displace.
+    //
+    // A family listed under `upgrades` must not also sit on the bench: the two tables would
+    // then double-book it, and following the upgrades first — which is what the page tells
+    // you to do — leaves the swap displacing something that no longer exists, making its
+    // net gain fiction. Such a family is instead benched at the power it will have AFTER
+    // the upgrade, since that is what a swap would really be giving up.
     const evalNow = evaluate(cat, owned, opts);
+    const upgradeTo = new Map();
+    for (const u of upgrades) {
+      const cur = upgradeTo.get(u.family);
+      if (cur == null || u.toMp > cur) upgradeTo.set(u.family, u.toMp);
+    }
     const bench = evalNow.families
       .map((f) => ({
         id: f.best.id,
         name: byId[f.best.id].name,
         rarity: byId[f.best.id].rarity,
-        mp: f.best.mp,
+        mp: upgradeTo.has(f.key) ? upgradeTo.get(f.key) : f.best.mp,
+        upgraded: upgradeTo.has(f.key),
         family: f.key,
       }))
       .filter((c) => !deadIds.has(c.id))
@@ -1185,20 +1201,28 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
             totalCost: next.cost + spendOnItems,
             coinsPerMp: (next.cost + spendOnItems) / gain,
           };
-          // The like-for-like comparison: the same accessories bought as swaps instead.
-          const rival = swaps.slice(0, next.slots);
-          const rivalGain = rival.reduce((n, x) => n + x.netGain, 0);
-          const rivalCost = rival.reduce((n, x) => n + x.cost, 0);
+          // Like-for-like: the SAME accessories, acquired by swapping instead of by buying
+          // slots. Comparing against the top of the swap list would be comparing different
+          // items and the stated saving would not be the one the reader is being shown.
+          let rivalGain = 0, displaced = 0, benchAt = 0;
+          for (const o of take) {
+            if (benchAt >= bench.length) break;
+            const out = bench[benchAt++];
+            rivalGain += Math.max(0, o.toMp - out.mp);
+            displaced += out.mp;
+          }
           slotBuy.swapGain = rivalGain;
-          slotBuy.swapCoinsPerMp = rivalGain > 0 ? rivalCost / rivalGain : Infinity;
+          slotBuy.swapCoinsPerMp = rivalGain > 0 ? spendOnItems / rivalGain : Infinity;
           slotBuy.worthIt = slotBuy.coinsPerMp < slotBuy.swapCoinsPerMp;
-          slotBuy.keptAP = gain - rivalGain;   // power you do not have to throw away
+          slotBuy.keptAP = displaced;   // power you would have thrown away by swapping
         }
       }
     }
 
     return {
       capacity, held, free: capacity ? free : null, full,
+      hiddenLocked: hideLocked
+        ? bestPerFamily(offers(cat, owned, prices, opts).filter((o) => o.locked)).length : 0,
       dead,
       upgrades: upgrades.sort((a, b) => a.coinsPerMp - b.coinsPerMp),
       swaps,
@@ -1913,7 +1937,10 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
   function renderCounts(d) {
     const set = (tab, n) => { const e = document.querySelector(`.tab[data-tab="${tab}"] .count`); if (e) e.textContent = n; };
     // The value tab shows one row per family, so its label must count families, not offers.
-    set("value", MP.bestPerFamily(d.all).filter((o) => !state.hideLocked || !o.locked).length);
+    const capNow = MP.capacityPlan(cat, state.owned, prices, { ...d.opts, hideLocked: state.hideLocked });
+    set("value", capNow.full
+      ? capNow.upgrades.length + capNow.swaps.length
+      : MP.bestPerFamily(d.all).filter((o) => !state.hideLocked || !o.locked).length);
     set("max", d.maxTier.filter((o) => !state.hideLocked || !o.locked).length);
     set("earn", d.earn.length);
     set("bag", Object.keys(state.owned).length);
@@ -1946,7 +1973,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
 
     // Telling someone to buy more when the bag is full is useless advice — nothing can
     // go in until something comes out. Say so, and change what is being recommended.
-    const cap = MP.capacityPlan(cat, state.owned, prices, d.opts);
+    const cap = MP.capacityPlan(cat, state.owned, prices, { ...d.opts, hideLocked: state.hideLocked });
     if (cap.full) { renderFullBag(node, cap); return; }
     if (cap.capacity && cap.free <= 2) {
       const warn = el("div", "callout warn");
@@ -1968,15 +1995,7 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     node.append(body);
     if (view.length > CAP) node.append(el("div", "empty", `Showing ${CAP} of ${view.length}. Narrow it with the search box.`));
     // Hiding things you cannot get is only helpful if you know it is happening.
-    const hidden = state.hideLocked ? MP.bestPerFamily(all).filter((o) => o.locked).length : 0;
-    if (hidden) {
-      const n = node.appendChild(el("div", "empty",
-        `${hidden} more ${hidden === 1 ? "accessory is" : "accessories are"} hidden because you cannot get them yet — `));
-      const b = el("button", "linkish", "show them anyway");
-      b.type = "button";
-      b.addEventListener("click", () => { $("hideLocked").checked = false; state.hideLocked = false; save(LS.hideLocked, false); render(); });
-      n.append(b);
-    }
+    lockedNote(node, state.hideLocked ? MP.bestPerFamily(all).filter((o) => o.locked).length : 0);
   }
 
   function renderMax({ maxTier }) {
@@ -2123,7 +2142,9 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
    */
   function renderFullBag(node, cap) {
     const head = el("div", "callout warn");
-    head.append(el("h3", null, `Your bag is full — ${cap.held} of ${cap.capacity} slots`));
+    head.append(el("h3", null, cap.held > cap.capacity
+      ? `Your bag is over its stated size — ${cap.held} accessories in ${cap.capacity} slots`
+      : `Your bag is full — ${cap.held} of ${cap.capacity} slots`));
     head.append(el("p", null,
       "Nothing new fits until something comes out, so this is what to trade rather than what to add."));
     node.append(head);
@@ -2154,19 +2175,23 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
     }
 
     if (cap.upgrades.length) {
-      node.append(el("h3", "slot-head", `Upgrades that cost no slot (${cap.upgrades.length})`));
+      node.append(el("h2", "slot-head", `Upgrades that cost no slot (${cap.upgrades.length})`));
       const sub = el("p", "note", "A higher tier of a family you already hold — the old one comes out as the new one goes in.");
       node.append(sub);
       const t = asTable(el("div", "ledger"));
-      header(t, "value");
-      fill(t, applyView(cap.upgrades).slice(0, CAP), entry, "");
+      header(t, "upgrades");
+      const upView = applyView(cap.upgrades);
+      fill(t, upView.slice(0, CAP), entry, state.search ? "No upgrade matches that search." : "");
       node.append(t);
+      truncationNote(node, upView.length);
     }
 
-    node.append(el("h3", "slot-head", `Swaps worth making (${cap.swaps.length})`));
+    const swapsView = state.search ? applyView(cap.swaps) : cap.swaps;
+    node.append(el("h2", "slot-head", `Swaps worth making (${swapsView.length})`));
     node.append(el("p", "note", "Each takes out your weakest accessory to make room. Ranked by coins per point of net gain, after what you give up."));
     const swapTable = asTable(el("div", "ledger"));
-    fill(swapTable, cap.swaps.slice(0, CAP), (sw, i) => {
+    header(swapTable, "swaps");
+    fill(swapTable, swapsView.slice(0, CAP), (sw, i) => {
       const row = entry(sw, i);
       row.classList.add("swap");
       const l2 = row.querySelector(".line2");
@@ -2177,14 +2202,41 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
         l2.append(out, el("span", "sep", "→"), inn, el("span", "sep", "·"),
           el("span", "gain", `net +${sw.netGain} AP`));
       }
-      // The headline number must be the net gain, not the raw one, or the ranking lies.
+      // The headline number must be the net gain, not the raw one, or the ranking lies —
+      // and the accessible name is set when the cell is built, so overwriting only the
+      // text would leave a screen reader announcing the pre-swap figure.
       const rate = row.querySelector(".c-rate");
-      if (rate) { rate.textContent = coins(sw.coinsPerNet); rate.append(el("span", "unit", "/AP")); }
+      if (rate) {
+        rate.textContent = coins(sw.coinsPerNet);
+        rate.setAttribute("aria-label", `coins per net power: ${coins(sw.coinsPerNet)}`);
+        rate.append(el("span", "unit", "/AP"));
+      }
       const power = row.querySelector(".c-power");
-      if (power) power.textContent = "+" + sw.netGain;
+      if (power) {
+        power.textContent = "+" + sw.netGain;
+        power.setAttribute("aria-label", `net power gained after the swap: +${sw.netGain}`);
+      }
       return row;
-    }, "No swap is worth it — everything you could buy is weaker than what you would have to remove.");
+    }, state.search ? "No swap matches that search." : "No swap is worth it — everything you could buy is weaker than what you would have to remove.");
     node.append(swapTable);
+    truncationNote(node, swapsView.length);
+    lockedNote(node, cap.hiddenLocked);
+  }
+
+  /** Says when a list has been cut short, rather than letting it look complete. */
+  function truncationNote(node, total) {
+    if (total > CAP) node.append(el("div", "empty", `Showing ${CAP} of ${total}. Narrow it with the search box.`));
+  }
+
+  /** Says when rows are being withheld because the player cannot get them. */
+  function lockedNote(node, hidden) {
+    if (!hidden) return;
+    const n = node.appendChild(el("div", "empty",
+      `${hidden} more ${hidden === 1 ? "accessory is" : "accessories are"} hidden because you cannot get them yet — `));
+    const b = el("button", "linkish", "show them anyway");
+    b.type = "button";
+    b.addEventListener("click", () => { $("hideLocked").checked = false; state.hideLocked = false; save(LS.hideLocked, false); render(); });
+    n.append(b);
   }
 
   /**
@@ -2395,8 +2447,10 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
       const input = $(id);
       input.value = String(id === "capacity" ? state.capacity : state.jacobusBought);
       input.addEventListener("input", () => {
-        const cap = Number(input.max) || Infinity;
-        set(Math.min(cap, Math.max(0, Number(input.value) || 0)));
+        const max = Number(input.max) || Infinity;
+        const v = Math.min(max, Math.max(0, Number(input.value) || 0));
+        if (String(v) !== input.value) input.value = String(v);   // show what is actually used
+        set(v);
         save(key, id === "capacity" ? state.capacity : state.jacobusBought);
         renderSoon();
       });

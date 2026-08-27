@@ -692,7 +692,10 @@
   function renderCounts(d) {
     const set = (tab, n) => { const e = document.querySelector(`.tab[data-tab="${tab}"] .count`); if (e) e.textContent = n; };
     // The value tab shows one row per family, so its label must count families, not offers.
-    set("value", MP.bestPerFamily(d.all).filter((o) => !state.hideLocked || !o.locked).length);
+    const capNow = MP.capacityPlan(cat, state.owned, prices, { ...d.opts, hideLocked: state.hideLocked });
+    set("value", capNow.full
+      ? capNow.upgrades.length + capNow.swaps.length
+      : MP.bestPerFamily(d.all).filter((o) => !state.hideLocked || !o.locked).length);
     set("max", d.maxTier.filter((o) => !state.hideLocked || !o.locked).length);
     set("earn", d.earn.length);
     set("bag", Object.keys(state.owned).length);
@@ -725,7 +728,7 @@
 
     // Telling someone to buy more when the bag is full is useless advice — nothing can
     // go in until something comes out. Say so, and change what is being recommended.
-    const cap = MP.capacityPlan(cat, state.owned, prices, d.opts);
+    const cap = MP.capacityPlan(cat, state.owned, prices, { ...d.opts, hideLocked: state.hideLocked });
     if (cap.full) { renderFullBag(node, cap); return; }
     if (cap.capacity && cap.free <= 2) {
       const warn = el("div", "callout warn");
@@ -747,15 +750,7 @@
     node.append(body);
     if (view.length > CAP) node.append(el("div", "empty", `Showing ${CAP} of ${view.length}. Narrow it with the search box.`));
     // Hiding things you cannot get is only helpful if you know it is happening.
-    const hidden = state.hideLocked ? MP.bestPerFamily(all).filter((o) => o.locked).length : 0;
-    if (hidden) {
-      const n = node.appendChild(el("div", "empty",
-        `${hidden} more ${hidden === 1 ? "accessory is" : "accessories are"} hidden because you cannot get them yet — `));
-      const b = el("button", "linkish", "show them anyway");
-      b.type = "button";
-      b.addEventListener("click", () => { $("hideLocked").checked = false; state.hideLocked = false; save(LS.hideLocked, false); render(); });
-      n.append(b);
-    }
+    lockedNote(node, state.hideLocked ? MP.bestPerFamily(all).filter((o) => o.locked).length : 0);
   }
 
   function renderMax({ maxTier }) {
@@ -902,7 +897,9 @@
    */
   function renderFullBag(node, cap) {
     const head = el("div", "callout warn");
-    head.append(el("h3", null, `Your bag is full — ${cap.held} of ${cap.capacity} slots`));
+    head.append(el("h3", null, cap.held > cap.capacity
+      ? `Your bag is over its stated size — ${cap.held} accessories in ${cap.capacity} slots`
+      : `Your bag is full — ${cap.held} of ${cap.capacity} slots`));
     head.append(el("p", null,
       "Nothing new fits until something comes out, so this is what to trade rather than what to add."));
     node.append(head);
@@ -933,19 +930,23 @@
     }
 
     if (cap.upgrades.length) {
-      node.append(el("h3", "slot-head", `Upgrades that cost no slot (${cap.upgrades.length})`));
+      node.append(el("h2", "slot-head", `Upgrades that cost no slot (${cap.upgrades.length})`));
       const sub = el("p", "note", "A higher tier of a family you already hold — the old one comes out as the new one goes in.");
       node.append(sub);
       const t = asTable(el("div", "ledger"));
-      header(t, "value");
-      fill(t, applyView(cap.upgrades).slice(0, CAP), entry, "");
+      header(t, "upgrades");
+      const upView = applyView(cap.upgrades);
+      fill(t, upView.slice(0, CAP), entry, state.search ? "No upgrade matches that search." : "");
       node.append(t);
+      truncationNote(node, upView.length);
     }
 
-    node.append(el("h3", "slot-head", `Swaps worth making (${cap.swaps.length})`));
+    const swapsView = state.search ? applyView(cap.swaps) : cap.swaps;
+    node.append(el("h2", "slot-head", `Swaps worth making (${swapsView.length})`));
     node.append(el("p", "note", "Each takes out your weakest accessory to make room. Ranked by coins per point of net gain, after what you give up."));
     const swapTable = asTable(el("div", "ledger"));
-    fill(swapTable, cap.swaps.slice(0, CAP), (sw, i) => {
+    header(swapTable, "swaps");
+    fill(swapTable, swapsView.slice(0, CAP), (sw, i) => {
       const row = entry(sw, i);
       row.classList.add("swap");
       const l2 = row.querySelector(".line2");
@@ -956,14 +957,41 @@
         l2.append(out, el("span", "sep", "→"), inn, el("span", "sep", "·"),
           el("span", "gain", `net +${sw.netGain} AP`));
       }
-      // The headline number must be the net gain, not the raw one, or the ranking lies.
+      // The headline number must be the net gain, not the raw one, or the ranking lies —
+      // and the accessible name is set when the cell is built, so overwriting only the
+      // text would leave a screen reader announcing the pre-swap figure.
       const rate = row.querySelector(".c-rate");
-      if (rate) { rate.textContent = coins(sw.coinsPerNet); rate.append(el("span", "unit", "/AP")); }
+      if (rate) {
+        rate.textContent = coins(sw.coinsPerNet);
+        rate.setAttribute("aria-label", `coins per net power: ${coins(sw.coinsPerNet)}`);
+        rate.append(el("span", "unit", "/AP"));
+      }
       const power = row.querySelector(".c-power");
-      if (power) power.textContent = "+" + sw.netGain;
+      if (power) {
+        power.textContent = "+" + sw.netGain;
+        power.setAttribute("aria-label", `net power gained after the swap: +${sw.netGain}`);
+      }
       return row;
-    }, "No swap is worth it — everything you could buy is weaker than what you would have to remove.");
+    }, state.search ? "No swap matches that search." : "No swap is worth it — everything you could buy is weaker than what you would have to remove.");
     node.append(swapTable);
+    truncationNote(node, swapsView.length);
+    lockedNote(node, cap.hiddenLocked);
+  }
+
+  /** Says when a list has been cut short, rather than letting it look complete. */
+  function truncationNote(node, total) {
+    if (total > CAP) node.append(el("div", "empty", `Showing ${CAP} of ${total}. Narrow it with the search box.`));
+  }
+
+  /** Says when rows are being withheld because the player cannot get them. */
+  function lockedNote(node, hidden) {
+    if (!hidden) return;
+    const n = node.appendChild(el("div", "empty",
+      `${hidden} more ${hidden === 1 ? "accessory is" : "accessories are"} hidden because you cannot get them yet — `));
+    const b = el("button", "linkish", "show them anyway");
+    b.type = "button";
+    b.addEventListener("click", () => { $("hideLocked").checked = false; state.hideLocked = false; save(LS.hideLocked, false); render(); });
+    n.append(b);
   }
 
   /**
@@ -1174,8 +1202,10 @@
       const input = $(id);
       input.value = String(id === "capacity" ? state.capacity : state.jacobusBought);
       input.addEventListener("input", () => {
-        const cap = Number(input.max) || Infinity;
-        set(Math.min(cap, Math.max(0, Number(input.value) || 0)));
+        const max = Number(input.max) || Infinity;
+        const v = Math.min(max, Math.max(0, Number(input.value) || 0));
+        if (String(v) !== input.value) input.value = String(v);   // show what is actually used
+        set(v);
         save(key, id === "capacity" ? state.capacity : state.jacobusBought);
         renderSoon();
       });

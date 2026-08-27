@@ -435,20 +435,36 @@
     const free = capacity ? Math.max(0, capacity - held) + dead.length : Infinity;
     const full = capacity > 0 && free <= 0;
 
-    const reachable = offers(cat, owned, prices, opts).filter((o) => !o.locked);
+    // The rest of the app hides what the player cannot obtain unless they ask to see it;
+    // this view was filtering unconditionally, so the toggle did nothing on a full bag.
+    const hideLocked = opts?.hideLocked !== false;
+    const reachable = offers(cat, owned, prices, opts).filter((o) => !hideLocked || !o.locked);
     // fromMp > 0 means this family already contributes, so the purchase replaces a member
     // rather than claiming a new slot.
     const upgrades = reachable.filter((o) => o.fromMp > 0);
     const additions = reachable.filter((o) => o.fromMp === 0);
 
+
     // The weakest things in the bag are what a brand-new accessory would displace.
+    //
+    // A family listed under `upgrades` must not also sit on the bench: the two tables would
+    // then double-book it, and following the upgrades first — which is what the page tells
+    // you to do — leaves the swap displacing something that no longer exists, making its
+    // net gain fiction. Such a family is instead benched at the power it will have AFTER
+    // the upgrade, since that is what a swap would really be giving up.
     const evalNow = evaluate(cat, owned, opts);
+    const upgradeTo = new Map();
+    for (const u of upgrades) {
+      const cur = upgradeTo.get(u.family);
+      if (cur == null || u.toMp > cur) upgradeTo.set(u.family, u.toMp);
+    }
     const bench = evalNow.families
       .map((f) => ({
         id: f.best.id,
         name: byId[f.best.id].name,
         rarity: byId[f.best.id].rarity,
-        mp: f.best.mp,
+        mp: upgradeTo.has(f.key) ? upgradeTo.get(f.key) : f.best.mp,
+        upgraded: upgradeTo.has(f.key),
         family: f.key,
       }))
       .filter((c) => !deadIds.has(c.id))
@@ -498,20 +514,28 @@
             totalCost: next.cost + spendOnItems,
             coinsPerMp: (next.cost + spendOnItems) / gain,
           };
-          // The like-for-like comparison: the same accessories bought as swaps instead.
-          const rival = swaps.slice(0, next.slots);
-          const rivalGain = rival.reduce((n, x) => n + x.netGain, 0);
-          const rivalCost = rival.reduce((n, x) => n + x.cost, 0);
+          // Like-for-like: the SAME accessories, acquired by swapping instead of by buying
+          // slots. Comparing against the top of the swap list would be comparing different
+          // items and the stated saving would not be the one the reader is being shown.
+          let rivalGain = 0, displaced = 0, benchAt = 0;
+          for (const o of take) {
+            if (benchAt >= bench.length) break;
+            const out = bench[benchAt++];
+            rivalGain += Math.max(0, o.toMp - out.mp);
+            displaced += out.mp;
+          }
           slotBuy.swapGain = rivalGain;
-          slotBuy.swapCoinsPerMp = rivalGain > 0 ? rivalCost / rivalGain : Infinity;
+          slotBuy.swapCoinsPerMp = rivalGain > 0 ? spendOnItems / rivalGain : Infinity;
           slotBuy.worthIt = slotBuy.coinsPerMp < slotBuy.swapCoinsPerMp;
-          slotBuy.keptAP = gain - rivalGain;   // power you do not have to throw away
+          slotBuy.keptAP = displaced;   // power you would have thrown away by swapping
         }
       }
     }
 
     return {
       capacity, held, free: capacity ? free : null, full,
+      hiddenLocked: hideLocked
+        ? bestPerFamily(offers(cat, owned, prices, opts).filter((o) => o.locked)).length : 0,
       dead,
       upgrades: upgrades.sort((a, b) => a.coinsPerMp - b.coinsPerMp),
       swaps,
