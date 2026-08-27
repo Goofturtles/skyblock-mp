@@ -976,11 +976,15 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
         const id = queue.shift();
         let list = null;
 
+        let throttled = false;
         for (let attempt = 0; attempt <= RETRIES && !list; attempt++) {
-          if (attempt) await sleep(300 * attempt * attempt);
+          // A dropped connection clears in milliseconds; a 429 needs real time, and
+          // clicking Live prices twice in a row is enough to earn one.
+          if (attempt) await sleep((throttled ? 1500 : 300) * attempt * attempt);
           try {
             // One hung socket otherwise costs a third of the throughput.
             const r = await fetch(`${COFL}/auctions/tag/${id}/active/bin`, { signal: AbortSignal.timeout(8000) });
+            throttled = r.status === 429;
             if (r.ok) list = await r.json();
           } catch { /* transient — retry */ }
         }
@@ -1037,8 +1041,9 @@ button.primary:hover:not(:disabled) { background: #5fdcd3; border-color: #5fdcd3
         ? "Could not reach the price service. If you are viewing this as a Claude Artifact, it blocks calls to "
           + "other sites by design — the live site at goofturtles.github.io/skyblock-mp can fetch them. "
           + "Otherwise it may be your connection. Existing prices are unchanged."
-        : `Only ${ok} of ${ids.length} accessories came back, so the existing prices were kept rather than `
-          + "replaced with a partial set. Try again in a moment.", "warn");
+        : `Only ${ok} of ${ids.length} accessories came back, so the existing prices were kept rather `
+          + "than replaced with a partial set. The price service throttles rapid repeat sweeps — "
+          + "give it a minute and try again.", "warn");
       stamp();
       return;
     }

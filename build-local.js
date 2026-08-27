@@ -58,4 +58,4 @@ if (process.argv.includes("--check")) {
 }
 
 fs.writeFileSync(here("index.html"), out);
-console.log(`wrote index.html  ${(out.length / 1024).toFixed(1)} KB  (css ${v.css}, ui ${v.ui})`);
+console.log(`wrote index.html  ${(Buffer.byteLength(out, "utf8") / 1024).toFixed(1)} KB  (css ${v.css}, ui ${v.ui})`);

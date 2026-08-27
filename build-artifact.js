@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 /**
- * Assembles dist/planner.html — a single self-contained page with the accessory
- * catalogue, a price snapshot and the power engine all inlined, so it works with
- * no server and no network.
+ * Assembles dist/planner.html — a single page with the accessory catalogue, a price
+ * snapshot and the power engine all inlined, so it needs no server and renders its
+ * full content offline.
+ *
+ * It is not request-free: the shell links Google Fonts, and the "Live prices" button
+ * reaches the Auction House. Both degrade cleanly — the type falls back to the system
+ * stack, and blocked prices leave the snapshot in place.
  *
  *   node build-artifact.js
  *
@@ -34,6 +38,16 @@ const head = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\
   + '<meta name="description" content="Ranks every Hypixel SkyBlock accessory by coins per Accessory Power.">\n'
   + '</head>\n<body>\n';
 
+// css/nbt/mp/ui go in raw — JSON escaping cannot help them. A literal `</script` or
+// `</style` in any of them would close its tag early and silently break the page.
+for (const [name, text] of [["style.css", css], ["nbt.js", nbt], ["mp.js", engine], ["ui.js", ui]]) {
+  const stray = text.match(/<\/\s*(script|style)/i);
+  if (stray) {
+    console.error(`${name} contains ${stray[0]}, which would terminate its tag when inlined`);
+    process.exit(1);
+  }
+}
+
 // Each placeholder swallows the `null` after it, so the shell stays valid JS on its own.
 const out = head + shell
   .replace("/*__CSS__*/", () => css)
@@ -47,11 +61,30 @@ for (const token of ["/*__CSS__*/", "/*__CATALOGUE__*/", "/*__PRICES__*/", "/*__
   if (out.includes(token)) { console.error(`placeholder ${token} was never substituted`); process.exit(1); }
 }
 
-fs.mkdirSync(path.join(__dirname, "dist"), { recursive: true });
+// Read the data before writing anything, so malformed input fails the build instead of
+// leaving a broken artifact on disk.
+const accessories = catalogue.accessories.length;
+const families = Object.keys(catalogue.families).length;
+const listings = Object.keys(snapshot.lowestBin).length;
+const taken = new Date(snapshot.generated).toISOString();
+
 const dst = path.join(__dirname, "dist", "planner.html");
+
+// `--check` mirrors build-local.js: fails when the committed artifact is behind its sources.
+if (process.argv.includes("--check")) {
+  const current = fs.existsSync(dst) ? fs.readFileSync(dst, "utf8") : "";
+  if (current !== out) {
+    console.error("dist/planner.html is stale — run `node build-artifact.js`");
+    process.exit(1);
+  }
+  console.log("dist/planner.html is up to date");
+  process.exit(0);
+}
+
+fs.mkdirSync(path.join(__dirname, "dist"), { recursive: true });
 fs.writeFileSync(dst, out);
 
 const kb = (n) => (n / 1024).toFixed(1) + " KB";
-console.log(`wrote dist/planner.html  ${kb(out.length)}`);
-console.log(`  catalogue ${catalogue.accessories.length} accessories, ${Object.keys(catalogue.families).length} families`);
-console.log(`  prices    ${Object.keys(snapshot.lowestBin).length} listings, taken ${new Date(snapshot.generated).toISOString()}`);
+console.log(`wrote dist/planner.html  ${kb(Buffer.byteLength(out, "utf8"))}`);
+console.log(`  catalogue ${accessories} accessories, ${families} families`);
+console.log(`  prices    ${listings} listings, taken ${taken}`);

@@ -91,6 +91,7 @@ yourself". Sweep takes about 4 seconds and is cached for 3 minutes.
     server.js            static host + /api/prices (auction sweep, NBT decode, cache)
     build-catalogue.js   regenerates data/accessories.json from Hypixel + NEU
     build-artifact.js    assembles dist/planner.html, one self-contained file
+    build-local.js       assembles index.html with content-hashed asset URLs
     mp.js                the power engine — rules, offers, budget solver (no DOM)
     nbt.js               minimal NBT reader, works in Node and the browser
     artifact/shell.html  page markup, shared by both targets
@@ -106,6 +107,9 @@ same `artifact/ui.js` behind them — the local page links the assets, the hoste
 inlines them. Edit `artifact/*`, then re-run `node build-artifact.js`.
 
 Rerun `node build-catalogue.js` when Hypixel adds accessories.
+
+Both builds take `--check`, which fails if the committed output is behind its sources — useful
+before pushing, since a stale `index.html` would pin GitHub Pages to old asset hashes.
 
 ## Checking it still works
 
@@ -136,9 +140,11 @@ from the page's share menu).
 node build-artifact.js
 ```
 
-That inlines the catalogue, a price snapshot and the engine into one ~158 KB
-`dist/planner.html` with no network calls at all — because a published Artifact runs under a CSP
-that blocks every external host. Consequences worth knowing:
+That inlines the catalogue, a price snapshot and the engine into one `dist/planner.html`, so the
+whole page renders offline. It is not request-free: the page still links Google Fonts and the
+**Live prices** button reaches out. A published Artifact runs under a CSP that blocks every
+external host, so on that copy the fonts fall back to the system stack and live prices are
+refused. Consequences worth knowing:
 
 - **Prices are a snapshot**, stamped on the page, not live. Re-run the snapshot command in the
   header of `build-artifact.js` and rebuild to refresh them.
